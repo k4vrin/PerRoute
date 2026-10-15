@@ -133,3 +133,34 @@ listOf("Domain" to "domain", "Controller" to "controller").forEach { (name, suit
         systemProperty("perroute.portOffset", "20000")
     }
 }
+
+// Isolated native feasibility targets. This does not package, sign, install or activate an extension.
+val macosSpikeOutput = layout.buildDirectory.dir("macos-spike")
+val buildMacosExtensionSpike = tasks.register<Exec>("buildMacosExtensionSpike") {
+    inputs.dir(layout.projectDirectory.dir("native/macos-spike"))
+    outputs.dir(macosSpikeOutput)
+    doFirst {
+        check(System.getProperty("os.name").lowercase().let { it == "mac os x" || it == "darwin" }) {
+            "The native extension spike requires macOS with Xcode"
+        }
+    }
+    commandLine("xcodebuild", "-project", "native/macos-spike/PerRouteMacosSpike.xcodeproj",
+        "-scheme", "PerRouteMacosSpike", "-configuration", "Debug",
+        "-derivedDataPath", macosSpikeOutput.get().asFile.absolutePath,
+        "CODE_SIGNING_ALLOWED=NO", "build")
+}
+
+tasks.register<JavaExec>("inspectMacosExtensionSpike") {
+    dependsOn(tasks.named("classes"), buildMacosExtensionSpike)
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.spike.MacExtensionSpike")
+    args(macosSpikeOutput.get().file("Build/Products/Debug/libPerRouteExtensionBridge.dylib").asFile.absolutePath)
+}
+
+tasks.register<JavaExec>("runMacosExtensionSpikeTests") {
+    dependsOn(tasks.named("testClasses"), buildMacosExtensionSpike)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.MacosExtensionSpikeTests")
+    args(macosSpikeOutput.get().file("Build/Products/Debug/libPerRouteExtensionBridge.dylib").asFile.absolutePath)
+    enableAssertions = true
+}
