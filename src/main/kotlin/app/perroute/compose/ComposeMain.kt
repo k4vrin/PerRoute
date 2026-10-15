@@ -411,6 +411,11 @@ internal class Shell(
 
 /** Entry point: single-instance check, state loading, then the main window, the tray icon and the Quick Access panel. */
 fun main(args: Array<String>) {
+    // The isolated native probe must run in the real app process before platform services are constructed.
+    if (args.firstOrNull() == "--extension-spike") {
+        app.perroute.platform.macos.spike.MacExtensionSpike.main(args.drop(1).toTypedArray())
+        return
+    }
     val platform = try {
         PlatformBootstrap.create()
     } catch (error: UnsupportedOperationException) {

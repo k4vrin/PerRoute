@@ -1,5 +1,7 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.ByteArrayOutputStream
+import groovy.json.JsonSlurper
 
 plugins {
     kotlin("jvm") version "2.1.21"
@@ -58,6 +60,9 @@ compose.desktop {
             packageVersion = "3.0.0"
             description = "Modern per-application proxy client"
             vendor = "PerRoute"
+            macOS {
+                bundleID = "app.perroute.spike"
+            }
             windows {
                 iconFile.set(project.file("src/main/resources/icons/perroute.ico"))
                 console = false
@@ -163,4 +168,46 @@ tasks.register<JavaExec>("runMacosExtensionSpikeTests") {
     mainClass.set("app.perroute.MacosExtensionSpikeTests")
     args(macosSpikeOutput.get().file("Build/Products/Debug/libPerRouteExtensionBridge.dylib").asFile.absolutePath)
     enableAssertions = true
+}
+
+// Copy the real Compose app image; never modify the base image or install into Applications here.
+val macosSpikeApp = layout.buildDirectory.dir("macos-spike-app/PerRoute.app")
+val stageMacosExtensionSpikeApp = tasks.register<Sync>("stageMacosExtensionSpikeApp") {
+    dependsOn(tasks.named("createDistributable"), buildMacosExtensionSpike)
+    into(macosSpikeApp)
+    from(layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app"))
+    from(macosSpikeOutput.map { it.dir("Build/Products/Debug") }) {
+        include("libPerRouteExtensionBridge.dylib")
+        into("Contents/Frameworks")
+    }
+    from(macosSpikeOutput.map { it.dir("Build/Products/Debug/app.perroute.spike.transparent-proxy.systemextension") }) {
+        into("Contents/Library/SystemExtensions/app.perroute.spike.transparent-proxy.systemextension")
+    }
+    doLast {
+        check(macosSpikeApp.get().file("Contents/MacOS/PerRoute").asFile.isFile) {
+            "Compose application launcher is missing"
+        }
+        check(macosSpikeApp.get().file("Contents/Library/SystemExtensions/app.perroute.spike.transparent-proxy.systemextension/Contents/MacOS/PerRouteSpikeExtension").asFile.isFile) {
+            "Embedded system extension executable is missing"
+        }
+    }
+}
+
+tasks.register<Exec>("inspectMacosExtensionSpikeApp") {
+    dependsOn(stageMacosExtensionSpikeApp)
+    val output = ByteArrayOutputStream()
+    standardOutput = output
+    commandLine(macosSpikeApp.get().file("Contents/MacOS/PerRoute").asFile.absolutePath,
+        "--extension-spike", macosSpikeApp.get().file("Contents/Frameworks/libPerRouteExtensionBridge.dylib").asFile.absolutePath)
+    doLast {
+        val snapshot = JsonSlurper().parseText(output.toString(Charsets.UTF_8)) as Map<*, *>
+        check(snapshot["bundleIdentifier"] == "app.perroute.spike") { "Probe did not identify the Compose container: $snapshot" }
+        check(file(snapshot["bundlePath"].toString()).canonicalFile == macosSpikeApp.get().asFile.canonicalFile) {
+            "Probe ran in a different app container: $snapshot"
+        }
+        check(snapshot["state"] == "idle" && snapshot["requestPending"] == false) { "Inspection must not submit an OS request" }
+        val evidence = layout.buildDirectory.file("macos-spike-app/inspection.json").get().asFile
+        evidence.writeText(output.toString(Charsets.UTF_8))
+        println("Compose container bridge inspection passed: ${snapshot["bundleIdentifier"]}")
+    }
 }
