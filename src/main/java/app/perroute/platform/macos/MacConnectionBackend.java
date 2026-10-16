@@ -90,8 +90,21 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
     @Override public void applyPerApp(List<String> apps) { throw unavailable("Per-app routing"); }
     @Override public void restorePerApp() { throw unavailable("Per-app recovery"); }
     @Override public void stopPerAppSidecar() { throw unavailable("Per-app sidecar"); }
-    @Override public List<ApplicationDescriptor> installedApplications() { throw unavailable("Application discovery"); }
-    @Override public List<ApplicationDescriptor> runningApplications() { throw unavailable("Application discovery"); }
+    @Override public List<ApplicationDescriptor> installedApplications() {
+        return descriptors(MacApplicationCatalog.system()::installed);
+    }
+    @Override public List<ApplicationDescriptor> runningApplications() {
+        return descriptors(MacApplicationCatalog.system()::running);
+    }
+    private static List<ApplicationDescriptor> descriptors(CatalogRead source) {
+        try {
+            var snapshot = source.read();
+            if (!snapshot.warnings().isEmpty()) throw new java.io.IOException(String.join("; ", snapshot.warnings()));
+            return snapshot.applications().stream()
+                    .map(app -> new ApplicationDescriptor(app.name(), app.executablePath().toString())).toList();
+        } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
+    }
+    @FunctionalInterface private interface CatalogRead { MacApplicationCatalog.Snapshot read() throws java.io.IOException; }
     @Override public void installCore(Consumer<String> progress) { throw unavailable("Core installation; supply a matching Darwin Xray binary"); }
     @Override public void installPerApp(Consumer<String> progress) { throw unavailable("Driver installation"); }
     @Override public UpdateDescriptor checkForUpdate(String feed) { throw unavailable("Automatic updates"); }

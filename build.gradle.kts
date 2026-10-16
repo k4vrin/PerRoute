@@ -440,3 +440,31 @@ tasks.register<JavaExec>("runMacosHelperMaintenanceTests") {
     mainClass.set("app.perroute.platform.macos.proxy.HelperMaintenanceTests")
     enableAssertions = true
 }
+
+val buildMacosDesktopBridge = tasks.register<Exec>("buildMacosDesktopBridge") {
+    inputs.dir("native/macos-desktop")
+    outputs.file(layout.buildDirectory.file("macos-desktop/libPerRouteDesktopBridge.dylib"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { layout.buildDirectory.dir("macos-desktop").get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-fobjc-arc", "-fmodules", "-Wall", "-Wextra", "-Werror", "-dynamiclib",
+        "-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=13.0", "-framework", "AppKit", "-framework", "Security",
+        "native/macos-desktop/ApplicationCatalog.m", "-o", layout.buildDirectory.file("macos-desktop/libPerRouteDesktopBridge.dylib").get().asFile.absolutePath)
+}
+tasks.matching { it.name == "createDistributable" }.configureEach {
+    if (System.getProperty("os.name") == "Mac OS X") {
+        dependsOn(buildMacosDesktopBridge)
+        inputs.files(buildMacosDesktopBridge)
+        doLast {
+            copy {
+                from(layout.buildDirectory.file("macos-desktop/libPerRouteDesktopBridge.dylib"))
+                into(layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app/Contents/Frameworks"))
+            }
+        }
+    }
+}
+tasks.register<JavaExec>("runMacosApplicationCatalogTests") {
+    dependsOn(tasks.named("testClasses"), buildMacosDesktopBridge)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.MacosApplicationCatalogTests")
+    enableAssertions = true
+}

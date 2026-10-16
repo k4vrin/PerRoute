@@ -113,6 +113,7 @@ import app.perroute.model.ProxyNode
 import app.perroute.routing.AppRouteMode
 import app.perroute.routing.AutoCandidatePool
 import app.perroute.routing.AutoServerSelector
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
@@ -145,7 +146,7 @@ private fun draftRoute(shell: Shell, path: String): DraftRoute {
 @Composable
 internal fun AppsScreen(shell: Shell) {
     if (!shell.controller.capabilities().perApp()) {
-        InfoBanner("Per-app routing and application discovery are unavailable in this local proxy preview. Configure individual apps to use its loopback SOCKS or HTTP proxy.", Modifier.fillMaxWidth())
+        ReadOnlyApplications(shell)
         return
     }
     val scope = rememberCoroutineScope()
@@ -740,5 +741,32 @@ private fun SelectedPanel(shell: Shell, selectedRoutes: List<Pair<String, DraftR
             else "Select an app to set bandwidth limits, or turn on Advanced to give apps their own server.",
             color = Muted, fontSize = 9.5.sp, lineHeight = 13.sp
         )
+    }
+}
+
+/** Browse observations without writing Windows-normalized selections or implying per-app routing. */
+@Composable
+private fun ReadOnlyApplications(shell: Shell) {
+    var apps by remember { mutableStateOf(emptyList<app.perroute.backend.api.ApplicationDescriptor>()) }
+    var loading by remember { mutableStateOf(true) }
+    var failure by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        try {
+            apps = withContext(Dispatchers.IO) { shell.controller.installedApplications(true) }
+        } catch (error: Exception) { failure = error.message ?: "Application discovery failed." }
+        finally { loading = false }
+    }
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        InfoBanner("Applications are listed for reference. Per-app routing is unavailable on macOS. Configure apps to use the local SOCKS or HTTP proxy, or use System proxy.", Modifier.fillMaxWidth())
+        if (loading) Text("Loading applications…", color = Muted)
+        failure?.let { Text(it, color = Red) }
+        LazyColumn(Modifier.fillMaxSize()) {
+            items(apps, key = { it.path() }) { app ->
+                Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    Text(app.name(), color = White)
+                    Text(app.path(), color = Muted, fontSize = 11.sp)
+                }
+            }
+        }
     }
 }
