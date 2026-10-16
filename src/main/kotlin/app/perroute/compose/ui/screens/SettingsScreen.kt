@@ -247,7 +247,7 @@ private fun ConnectionSettings(shell: Shell) {
     val locked = shell.locked
     SettingsPage("Connection") {
         if (shell.controller.capabilities().supports(ConnectionMode.SYSTEM_PROXY) && !shell.controller.capabilities().perApp()) {
-            InfoBanner("System proxy configures one supported active network service. Disconnect restores original settings. After a forced quit, reopen PerRoute to retry recovery. Some apps ignore system proxies.", Modifier.fillMaxWidth())
+            InfoBanner("System proxy configures one supported active network service. Signed installations request background-service approval during first connection. Disconnect restores original settings. If recovery is pending, reopen PerRoute and check the service approval. Some apps ignore system proxies.", Modifier.fillMaxWidth())
         }
         if (shell.controller.capabilities().persistentState() && !shell.controller.capabilities().supports(ConnectionMode.SYSTEM_PROXY)) {
             InfoBanner("Servers and settings are encrypted with a key held in macOS Keychain. System networking is unchanged.", Modifier.fillMaxWidth())

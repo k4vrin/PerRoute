@@ -24,10 +24,10 @@ public final class MacStateSession implements AutoCloseable {
     private final app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy;
     private boolean closed;
     private MacStateSession(SingleInstanceLock lock, MacStateCipher cipher, AppStateStore store,
-                            AppState state, EncryptedPreferences preferences, Path recoveryFile) {
+                            AppState state, EncryptedPreferences preferences, Path recoveryFile) throws IOException {
         this.lock = lock; this.cipher = cipher; this.store = store; this.state = state; this.preferences = preferences;
-        systemProxy = new app.perroute.platform.macos.proxy.MacSystemProxyService(
-                new app.perroute.platform.macos.proxy.EncryptedProxyJournal(recoveryFile, cipher));
+        systemProxy = app.perroute.platform.macos.proxy.HelperSystemProxyLifecycle.preferred(
+                new app.perroute.platform.macos.proxy.EncryptedProxyJournal(recoveryFile, cipher), recoveryFile.resolveSibling("helper-proxy.pending"));
     }
     public static MacStateSession openDefault() throws IOException { return openDefault(false); }
     public static MacStateSession openDefault(boolean interactiveDesktop) throws IOException {

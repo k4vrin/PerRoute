@@ -62,6 +62,7 @@ compose.desktop {
             vendor = "PerRoute"
             macOS {
                 bundleID = "app.perroute.spike"
+                iconFile.set(project.file("src/main/resources/icons/perroute.icns"))
             }
             windows {
                 iconFile.set(project.file("src/main/resources/icons/perroute.ico"))
@@ -351,5 +352,77 @@ tasks.register<JavaExec>("runMacosProxyAcceptance") {
     mainClass.set("app.perroute.platform.macos.proxy.NativeProxyAcceptance")
     args(providers.gradleProperty("proxySnapshotMode").getOrElse("verify"),
         providers.gradleProperty("proxySnapshotFile").getOrElse("/tmp/perroute-proxy-acceptance.json"))
+    enableAssertions = true
+}
+
+// Local builds compile both Darwin architectures without registering a service or requesting privileges.
+val macosHelperOutput = layout.buildDirectory.dir("macos-helper")
+val helperSources = layout.projectDirectory.dir("native/macos-helper")
+val buildMacosProxyHelper = tasks.register<Exec>("buildMacosProxyHelper") {
+    inputs.dir(helperSources)
+    outputs.file(macosHelperOutput.map { it.file("PerRouteProxyHelper") })
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { macosHelperOutput.get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-fobjc-arc", "-fmodules", "-Wall", "-Wextra", "-Werror",
+        "-mmacosx-version-min=13.0", "-arch", "arm64", "-arch", "x86_64",
+        "-framework", "Foundation", "-framework", "Security", "-framework", "SystemConfiguration",
+        "native/macos-helper/ProxyPolicy.m", "native/macos-helper/ProxyJournal.m", "native/macos-helper/ProxyHelper.m",
+        "-Wl,-sectcreate,__TEXT,__info_plist,${helperSources.file("HelperInfo.plist").asFile.absolutePath}",
+        "-o", macosHelperOutput.get().file("PerRouteProxyHelper").asFile.absolutePath)
+}
+val buildMacosProxyBridge = tasks.register<Exec>("buildMacosProxyBridge") {
+    inputs.dir(helperSources)
+    outputs.file(macosHelperOutput.map { it.file("libPerRouteProxyBridge.dylib") })
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { macosHelperOutput.get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-dynamiclib", "-fobjc-arc", "-fmodules", "-Wall", "-Wextra", "-Werror",
+        "-mmacosx-version-min=13.0", "-arch", "arm64", "-arch", "x86_64",
+        "-framework", "Foundation", "-framework", "Security", "-framework", "ServiceManagement",
+        "native/macos-helper/ProxyPolicy.m", "native/macos-helper/ProxyBridge.m",
+        "-install_name", "@rpath/libPerRouteProxyBridge.dylib",
+        "-o", macosHelperOutput.get().file("libPerRouteProxyBridge.dylib").asFile.absolutePath)
+}
+val compileMacosProxyHelperTests = tasks.register<Exec>("compileMacosProxyHelperTests") {
+    inputs.dir(helperSources)
+    outputs.file(macosHelperOutput.map { it.file("PolicyTests") })
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { macosHelperOutput.get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-fobjc-arc", "-fmodules", "-Wall", "-Wextra", "-Werror",
+        "-mmacosx-version-min=13.0", "-framework", "Foundation", "-framework", "Security",
+        "native/macos-helper/ProxyPolicy.m", "native/macos-helper/ProxyJournal.m", "native/macos-helper/PolicyTests.m",
+        "-o", macosHelperOutput.get().file("PolicyTests").asFile.absolutePath)
+}
+tasks.register<Exec>("runMacosProxyHelperPolicyTests") {
+    dependsOn(compileMacosProxyHelperTests)
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(macosHelperOutput.get().file("PolicyTests").asFile.absolutePath)
+}
+tasks.matching { it.name == "createDistributable" }.configureEach {
+    if (System.getProperty("os.name") == "Mac OS X") {
+        dependsOn(buildMacosProxyHelper, buildMacosProxyBridge)
+        inputs.dir(helperSources)
+        inputs.files(buildMacosProxyHelper, buildMacosProxyBridge)
+        doLast {
+            val contents = layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app/Contents").get().asFile
+            copy { from(macosHelperOutput.map { it.file("PerRouteProxyHelper") }); into(contents.resolve("Library/HelperTools")) }
+            copy { from(helperSources.file("app.perroute.proxy-helper.plist")); into(contents.resolve("Library/LaunchDaemons")) }
+            copy { from(macosHelperOutput.map { it.file("libPerRouteProxyBridge.dylib") }); into(contents.resolve("Frameworks")) }
+            check(contents.resolve("Library/HelperTools/PerRouteProxyHelper").setExecutable(true, false))
+        }
+    }
+}
+tasks.register<JavaExec>("runMacosProxyHelperTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.HelperLifecycleTests")
+    enableAssertions = true
+}
+
+tasks.register<JavaExec>("runMacosProxyHelperBridgeTests") {
+    dependsOn(tasks.named("testClasses"), buildMacosProxyBridge)
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.HelperBridgeTests")
+    args(macosHelperOutput.get().file("libPerRouteProxyBridge.dylib").asFile.absolutePath)
     enableAssertions = true
 }
