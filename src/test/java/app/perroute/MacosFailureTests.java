@@ -1,9 +1,9 @@
 package app.perroute;
 
 import app.perroute.backend.api.ConnectionBackend;
-import app.perroute.compose.PerRouteController;
-import app.perroute.compose.ActionResult;
-import app.perroute.compose.ConnectionPhase;
+import app.perroute.compose.controller.PerRouteController;
+import app.perroute.compose.controller.ActionResult;
+import app.perroute.compose.controller.ConnectionPhase;
 import app.perroute.model.*;
 import app.perroute.persistence.AppStateStore;
 import app.perroute.platform.macos.*;
