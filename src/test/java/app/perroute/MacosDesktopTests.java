@@ -1,7 +1,7 @@
 package app.perroute;
 
 import app.perroute.backend.api.*;
-import app.perroute.compose.PerRouteController;
+import app.perroute.compose.controller.PerRouteController;
 import app.perroute.model.*;
 import app.perroute.persistence.AppStateStore;
 import app.perroute.platform.macos.*;
