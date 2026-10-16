@@ -282,3 +282,11 @@ tasks.register<JavaExec>("runMacosFailureTests") {
     systemProperty("perroute.portOffset", "20000")
     enableAssertions = true
 }
+
+// Policy and encrypted journal only: all network-service settings are simulated.
+tasks.register<JavaExec>("runMacosProxyOwnershipTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.SystemProxyOwnershipTests")
+    enableAssertions = true
+}
