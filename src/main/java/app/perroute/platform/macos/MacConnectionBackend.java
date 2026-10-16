@@ -16,16 +16,19 @@ import java.util.function.Consumer;
 
 /** Owns only its local Xray child. No OS networking operations or process enumeration are available. */
 public final class MacConnectionBackend implements ConnectionBackend, StartupRecovery {
+    private final BackendCapabilities capabilities;
     private final XrayRuntime runtime;
     private final XrayProcessManager process;
     private final NetworkDiagnostics diagnostics = new NetworkDiagnostics();
 
-    public MacConnectionBackend(XrayRuntime runtime, Path data) {
+    public MacConnectionBackend(XrayRuntime runtime, Path data) { this(runtime, data, false); }
+    public MacConnectionBackend(XrayRuntime runtime, Path data, boolean persistent) {
+        capabilities = persistent ? BackendCapabilities.macosLocal() : BackendCapabilities.macosLocalPreview();
         if (runtime.target() == XrayRuntime.Target.WINDOWS_X64) throw new IllegalArgumentException("Darwin runtime required");
         this.runtime = runtime;
         this.process = new XrayProcessManager(runtime, data);
     }
-    @Override public BackendCapabilities capabilities() { return BackendCapabilities.macosLocalPreview(); }
+    @Override public BackendCapabilities capabilities() { return capabilities; }
     @Override public boolean coreReady() {
         try { runtime.requireExecutable(false); return true; } catch (java.io.IOException error) { return false; }
     }

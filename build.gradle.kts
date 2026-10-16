@@ -251,3 +251,17 @@ tasks.register<JavaExec>("runMacosDesktopTests") {
     systemProperty("perroute.portOffset", "20000")
     enableAssertions = true
 }
+
+tasks.register<JavaExec>("runMacosSecureStateTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.MacSecureStateTests")
+    enableAssertions = true
+}
+
+tasks.register<JavaExec>("runMacosNativeKeychainTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.MacNativeKeychainTests")
+    enableAssertions = true
+}

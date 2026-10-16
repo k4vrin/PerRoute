@@ -246,6 +246,9 @@ private fun ConnectionSettings(shell: Shell) {
     }
     val locked = shell.locked
     SettingsPage("Connection") {
+        if (shell.controller.capabilities().persistentState() && !shell.controller.capabilities().supports(ConnectionMode.SYSTEM_PROXY)) {
+            InfoBanner("Servers and settings are encrypted with a key held in macOS Keychain. System networking is unchanged.", Modifier.fillMaxWidth())
+        }
         if (!shell.controller.capabilities().persistentState()) {
             InfoBanner("macOS local preview: imported servers and settings stay in memory and are discarded on quit. System networking is unchanged.", Modifier.fillMaxWidth())
             Spacer(Modifier.height(8.dp))

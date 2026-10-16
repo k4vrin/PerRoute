@@ -165,8 +165,8 @@ internal fun RoutingSettings(shell: Shell) {
 /** Portable, optionally encrypted backups, and restoring them with a preview, path remapping and a rollback snapshot. */
 @Composable
 internal fun BackupSettings(shell: Shell) {
-    if (!shell.controller.capabilities().persistentState()) {
-        InfoBanner("Backup and restore are unavailable until secure persistent storage is implemented. This preview keeps imported settings only for the current session.", Modifier.fillMaxWidth())
+    if (!shell.controller.capabilities().backupRestore()) {
+        InfoBanner(if (shell.controller.capabilities().persistentState()) "Backup and restore are unavailable on macOS until cross-platform restoration is verified." else "Backup and restore are unavailable until secure persistent storage is implemented. This preview keeps imported settings only for the current session.", Modifier.fillMaxWidth())
         return
     }
     val controller = shell.controller

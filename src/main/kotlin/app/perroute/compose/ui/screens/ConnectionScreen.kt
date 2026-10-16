@@ -313,6 +313,7 @@ internal fun ConnectionScreen(shell: Shell) {
         }
         val banner: @Composable () -> Unit = {
             when {
+                !shell.controller.capabilities().supports(app.perroute.model.ConnectionMode.SYSTEM_PROXY) && shell.controller.capabilities().persistentState() -> InfoBanner("macOS Local proxy: servers and settings are saved with a Keychain-protected key. Only apps configured for the loopback proxy use it.", Modifier.fillMaxWidth())
                 !shell.controller.capabilities().persistentState() -> InfoBanner("macOS local preview: servers and settings are temporary and discarded on quit. Only apps configured for the loopback proxy use it.", Modifier.fillMaxWidth())
                 missing.isNotEmpty() -> InfoBanner(
                     "${appName(missing[0].applicationPath())} is assigned to ${missing[0].label().ifBlank { "a custom server" }}, which is no longer in your server list" +

@@ -21,7 +21,7 @@ public final class PlatformBootstrap {
         if (isMac(osName)) {
             var runtime = app.perroute.service.XrayRuntime.forPlatform(osName, System.getProperty("os.arch"),
                     AppDirectories.coreDirectory());
-            var backend = new app.perroute.platform.macos.MacConnectionBackend(runtime, dataDirectory);
+            var backend = new app.perroute.platform.macos.MacConnectionBackend(runtime, dataDirectory, true);
             return new PlatformServices(backend, backend);
         }
         requireWindows(osName);

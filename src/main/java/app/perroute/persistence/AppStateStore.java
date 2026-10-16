@@ -28,7 +28,8 @@ import java.util.List;
 
 public final class AppStateStore {
     private final Path file;
-    private final StateProtector protector;
+    private final StateCipher protector;
+    private final boolean privateFiles;
     private final boolean memoryOnly;
     private volatile byte[] memory;
     private final ShareLinkParser parser = new ShareLinkParser();
@@ -37,9 +38,23 @@ public final class AppStateStore {
         this.file = file;
         this.protector = new StateProtector(file.resolveSibling(file.getFileName() + ".key"));
         this.memoryOnly = false;
+        this.privateFiles = false;
     }
 
-    private AppStateStore() { file = null; protector = null; memoryOnly = true; }
+    private AppStateStore() { file = null; protector = null; memoryOnly = true; privateFiles = false; }
+
+    public AppStateStore(Path file, StateCipher protector) {
+        this.file = file;
+        this.protector = java.util.Objects.requireNonNull(protector);
+        this.memoryOnly = false;
+        this.privateFiles = true;
+    }
+
+    /** Keep restore snapshots under the same key policy as the primary store. */
+    public AppStateStore sibling(Path path) {
+        if (memoryOnly) return inMemory();
+        return privateFiles ? new AppStateStore(path, protector) : new AppStateStore(path);
+    }
 
     /** Development preview storage until platform key custody is available. Never creates a key file. */
     public static AppStateStore inMemory() { return new AppStateStore(); }
@@ -47,14 +62,20 @@ public final class AppStateStore {
     /** The state format written by this version. States without a version were written by PerRoute 2 or earlier. */
     public static final int STATE_VERSION = 3;
 
+    public boolean exists() { return !memoryOnly && Files.exists(file, java.nio.file.LinkOption.NOFOLLOW_LINKS); }
+
     public AppState load() throws IOException {
         if (memoryOnly) return memory == null ? new AppState() : parse(memory);
-        if (!Files.isRegularFile(file)) return new AppState();
+        if (privateFiles) {
+            if (!Files.exists(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return new AppState();
+            PrivateStateFiles.requireRegular(file);
+        } else if (!Files.isRegularFile(file)) return new AppState();
         return parse(loadProperties());
     }
 
     /** The decrypted key-value pairs of the file, including keys this version does not know. */
     public Properties loadProperties() throws IOException {
+        if (privateFiles) PrivateStateFiles.requireRegular(file);
         byte[] plain = memoryOnly ? (memory == null ? new byte[0] : memory.clone()) : protector.unprotect(Files.readAllBytes(file));
         Properties properties = new Properties();
         properties.load(new ByteArrayInputStream(plain));
@@ -245,6 +266,7 @@ public final class AppStateStore {
     public synchronized void write(byte[] plain) throws IOException {
         if (memoryOnly) { memory = plain.clone(); return; }
         byte[] encrypted = protector.protect(plain);
+        if (privateFiles) { PrivateStateFiles.write(file, encrypted); return; }
         Files.createDirectories(file.toAbsolutePath().getParent());
         Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
         Files.write(temporary, encrypted);

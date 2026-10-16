@@ -421,15 +421,22 @@ fun main(args: Array<String>) {
         System.err.println("Network guard/recovery is unavailable in the macOS local preview.")
         return
     }
-    val preview = if (macPreview) app.perroute.platform.macos.MacPreviewSession.open() else null
+    val storage = if (macPreview) try {
+        app.perroute.platform.macos.MacStateSession.openDefault()
+    } catch (error: Exception) {
+        val detail = "PerRoute could not open secure macOS settings: ${error.message}"
+        System.err.println(detail)
+        if (!GraphicsEnvironment.isHeadless()) javax.swing.JOptionPane.showMessageDialog(null, detail,
+            "PerRoute settings unavailable", javax.swing.JOptionPane.ERROR_MESSAGE)
+        return
+    } else null
     try {
-        runDesktop(args, preview)
-    } finally {
-        preview?.close()
-    }
+        val preview = if (macPreview) app.perroute.platform.macos.MacPreviewSession.open() else null
+        try { runDesktop(args, preview, storage) } finally { preview?.close() }
+    } finally { storage?.close() }
 }
 
-private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos.MacPreviewSession?) {
+private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos.MacPreviewSession?, storage: app.perroute.platform.macos.MacStateSession?) {
     val platform = try {
         if (preview != null) PlatformBootstrap.forOs(System.getProperty("os.name"), preview.directory())
         else PlatformBootstrap.create()
@@ -451,9 +458,9 @@ private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos
         lock.close()
         return
     }
-    val store = if (preview != null) AppStateStore.inMemory() else AppStateStore(dataDirectory.resolve("state.bin"))
+    val store = storage?.store() ?: AppStateStore(dataDirectory.resolve("state.bin"))
     val stateLoader = java.util.concurrent.CompletableFuture.supplyAsync {
-        runCatching { store.load() }
+        runCatching { storage?.state() ?: store.load() }
     }
     runCatching {
         Toolkit.getDefaultToolkit()
@@ -463,25 +470,15 @@ private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos
     val loaded = stateLoader.join()
     val state = loaded.getOrElse { app.perroute.model.AppState() }
     Perf.mark("state.loaded")
-    if (preview != null) state.setConnectionMode(ConnectionMode.BROWSER_PROXY)
-    val controller = if (preview == null) PerRouteController(state, store, platform.connections()) else {
-        val preferences = app.perroute.platform.macos.MemoryPreferences().apply {
-            putBoolean("v3.initialized", true)
-            putBoolean("v3.qualityBackground", false)
-            putBoolean("v3.routeMonitoring", false)
-            putBoolean("v3.trafficGateway", false)
-            putBoolean("autoReconnect", false)
-            putBoolean("autoFailover", false)
-            putBoolean("autoSpeedTest", false)
-        }
-        PerRouteController(state, store, platform.connections(), preferences)
-    }
+    val controller = if (storage == null) PerRouteController(state, store, platform.connections())
+        else PerRouteController(state, store, platform.connections(), storage.preferences())
     loaded.exceptionOrNull()?.let { controller.reportStartupProblem("Saved settings could not be opened: ${it.message ?: it.javaClass.simpleName}") }
     // The native macOS Quit menu may exit the JVM without unwinding the Compose application call.
     val previewShutdown = preview?.let {
         Thread({
             controller.close()
             runCatching { it.close() }
+            storage?.close()
         }, "perroute-preview-cleanup").also { Runtime.getRuntime().addShutdownHook(it) }
     }
     Perf.mark("controller.ready")

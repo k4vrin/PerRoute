@@ -907,7 +907,7 @@ class PerRouteController @JvmOverloads constructor(
      * fails, memory, the state file and the preferences are put back, so a half-restored setup never remains.
      */
     fun restoreBackup(request: RestoreRequest, mode: BackupService.Mode, remap: Map<String, String>): ActionResult {
-        if (!capabilities().persistentState()) return ActionResult(false, "Backup restore needs persistent secure storage, unavailable in this preview.")
+        if (!capabilities().backupRestore()) return ActionResult(false, "Backup restore is unavailable until platform restoration is verified.")
         editLock("settings")?.let { return it }
         val currentBytes = synchronized(state) { store.serialize(state) }
         val preferencesBefore = preferenceSnapshot()
@@ -917,7 +917,7 @@ class PerRouteController @JvmOverloads constructor(
             return ActionResult(false, "The backup could not be applied; nothing was changed: ${message(error)}")
         }
         try {
-            AppStateStore(restoreSnapshotFile).write(withPreferences(currentBytes, preferencesBefore))
+            store.sibling(restoreSnapshotFile).write(withPreferences(currentBytes, preferencesBefore))
         } catch (error: Throwable) {
             return ActionResult(false, "A rollback snapshot could not be written, so nothing was restored: ${message(error)}")
         }
@@ -946,7 +946,7 @@ class PerRouteController @JvmOverloads constructor(
         editLock("settings")?.let { return it }
         if (!hasRestoreSnapshot()) return ActionResult(false, "There is no restore to undo.")
         return try {
-            val properties = AppStateStore(restoreSnapshotFile).loadProperties()
+            val properties = store.sibling(restoreSnapshotFile).loadProperties()
             val previous = store.parse(properties)
             val prefs = properties.stringPropertyNames().filter { it.startsWith(ROLLBACK_PREFIX) }
                 .associate { it.removePrefix(ROLLBACK_PREFIX) to properties.getProperty(it) }
