@@ -29,6 +29,14 @@ public final class ProxyReadbackTests {
         expectIo(() -> reader.read("deleted"));
         var unsupported = new NetworkServiceInventory(stable.services(), Observation.unavailable(Status.UNREADABLE), Consistency.UNCHANGED);
         expectIo(() -> new StableProxyReadback(() -> unsupported, () -> {}, 3).read("one"));
+        var pendingService = stable.services().getFirst();
+        var pendingSettings = new ProxySettings(Map.of("HTTPEnable", 1, "HTTPProxy", "127.0.0.1", "HTTPPort", 17891));
+        var pending = new Service("one", "private", pendingService.interfaces(), true, true, true, true,
+                Observation.present(pendingSettings), Observation.present(EMPTY), pendingService.runtimeState(), List.of("en0"));
+        var partial = new NetworkServiceInventory(List.of(pending), stable.globalProxies(), Consistency.UNCHANGED);
+        var partialState = new StableProxyReadback(() -> partial, () -> {}, 3).read("one");
+        check(partialState.configured().equals(pendingSettings), "Partial commit retains actual configured values");
+        check(!ManualProxySemantics.equivalent(partialState.configured(), partialState.effective()), "Lagging Setup is observable for rollback");
         Thread.currentThread().interrupt();
         try { reader.read("one"); throw new AssertionError("Cancellation ignored"); }
         catch (InterruptedException expected) { check(Thread.currentThread().isInterrupted(), "Cancellation flag preserved"); }

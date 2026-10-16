@@ -29,10 +29,14 @@ public final class EffectiveProxyProjection {
 
     public List<Result> project(NetworkServiceInventory inventory) {
         Objects.requireNonNull(inventory);
-        return inventory.services().stream().map(service -> project(inventory, service)).toList();
+        return project(inventory, true);
     }
 
-    private Result project(NetworkServiceInventory inventory, Service service) {
+    List<Result> project(NetworkServiceInventory inventory, boolean requireSetupAgreement) {
+        return inventory.services().stream().map(service -> project(inventory, service, requireSetupAgreement)).toList();
+    }
+
+    private Result project(NetworkServiceInventory inventory, Service service, boolean requireSetupAgreement) {
         if (inventory.preferences() != Consistency.UNCHANGED) return refused(service, Outcome.PREFERENCES_UNSTABLE);
         if (service.scope() != Scope.CANDIDATE) return refused(service, Outcome.INELIGIBLE_SERVICE);
         String bsd = service.interfaces().getFirst().bsdName();
@@ -47,7 +51,7 @@ public final class EffectiveProxyProjection {
                         || other.interfaces().stream().anyMatch(layer -> layer.bsdName().equals(bsd))).count();
         if (competitors != 1) return refused(service, Outcome.AMBIGUOUS_INTERFACE);
         if (service.publishedSetup().status() != Status.PRESENT) return refused(service, Outcome.SETUP_UNAVAILABLE);
-        if (!service.configured().settings().equals(service.publishedSetup().settings())) return refused(service, Outcome.SETUP_DIFFERENT);
+        if (requireSetupAgreement && !service.configured().settings().equals(service.publishedSetup().settings())) return refused(service, Outcome.SETUP_DIFFERENT);
         // State can override Setup. A nonempty override needs a separate merge/schema proof.
         if (service.runtimeState().status() != Status.ABSENT
                 && (service.runtimeState().status() != Status.PRESENT || !service.runtimeState().settings().orElseThrow().values().isEmpty()))

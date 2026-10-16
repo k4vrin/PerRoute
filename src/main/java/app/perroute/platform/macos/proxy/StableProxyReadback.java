@@ -25,7 +25,9 @@ public final class StableProxyReadback {
             // Compare the complete immutable observations, not just the target endpoint. A service-set,
             // interface, Setup, runtime or scoped-context change invalidates the previous sample.
             if (current.equals(previous)) {
-                var result = new EffectiveProxyProjection().project(current).stream()
+                // Commit can precede apply. Keep configured and observed scope separate when Setup lags;
+                // ownership must see the disagreement so it can roll back a partially committed write.
+                var result = new EffectiveProxyProjection().project(current, false).stream()
                         .filter(value -> value.serviceId().equals(serviceId)).findFirst();
                 if (result.isPresent() && result.get().scoped().isPresent()) {
                     var service = current.services().stream().filter(value -> value.id().equals(serviceId)).findFirst().orElseThrow();
