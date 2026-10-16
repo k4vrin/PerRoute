@@ -112,6 +112,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -498,6 +499,8 @@ private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos
         var trayBusy by remember { mutableStateOf(false) }
         var trayToggling by remember { mutableStateOf(false) }
         var mainWindow by remember { mutableStateOf<Frame?>(null) }
+        var dockCanReopen by remember { mutableStateOf(false) }
+        val macDesktop = PlatformBootstrap.isMac(System.getProperty("os.name"))
         var nativeTrayIcon by remember { mutableStateOf<TrayIcon?>(null) }
         var trayConnected by remember { mutableStateOf(controller.isConnected()) }
         var traySelectedKey by remember { mutableStateOf(controller.selectedNodeKey()) }
@@ -516,6 +519,36 @@ private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos
         fun hideMainWindow() {
             val shell = shellHolder[0]
             if (shell == null) windowVisible = false else shell.leaveApps { windowVisible = false }
+        }
+        DisposableEffect(Unit) {
+            val hooks = app.perroute.platform.macos.MacDesktopIntegration.install(
+                { trayScope.launch {
+                    quickVisible = false
+                    windowVisible = true
+                    mainWindow?.let { frame ->
+                        frame.extendedState = frame.extendedState and Frame.ICONIFIED.inv()
+                        frame.isVisible = true
+                        frame.toFront()
+                        frame.requestFocus()
+                    }
+                } },
+                { trayScope.launch { exitPerRoute() } },
+                { trayScope.launch {
+                    windowVisible = true
+                    shellHolder[0]?.navigate(Tab.Settings)
+                } }
+            )
+            dockCanReopen = hooks.supportsReopen()
+            onDispose { hooks.close() }
+        }
+        fun handleMainKey(event: KeyEvent): Boolean {
+            if (macDesktop && event.type == KeyEventType.KeyDown && event.isMetaPressed) {
+                when (event.key) {
+                    Key.Comma -> { shellHolder[0]?.navigate(Tab.Settings); return true }
+                    Key.W -> { if (dockCanReopen || nativeTrayIcon != null) hideMainWindow() else exitPerRoute(); return true }
+                }
+            }
+            return shellHolder[0]?.handleKey(event) ?: false
         }
         fun trayAction(toggling: Boolean = false, action: () -> ActionResult) {
             if (trayBusy) return
@@ -601,14 +634,14 @@ private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos
         }
         Window(
             visible = windowVisible,
-            onCloseRequest = { if (nativeTrayIcon == null) exitPerRoute() else hideMainWindow() },
+            onCloseRequest = { if (nativeTrayIcon == null && !dockCanReopen) exitPerRoute() else hideMainWindow() },
             state = windowState,
             title = "PerRoute",
             icon = painterResource("icons/perroute-icon-256.png"),
             undecorated = true,
             transparent = false,
             resizable = true,
-            onPreviewKeyEvent = { event -> shellHolder[0]?.handleKey(event) ?: false }
+            onPreviewKeyEvent = ::handleMainKey
         ) {
             LaunchedEffect(Unit) {
                 mainWindow = window
