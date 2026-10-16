@@ -321,3 +321,12 @@ tasks.register<JavaExec>("runMacosProxyReadbackTests") {
     mainClass.set("app.perroute.platform.macos.proxy.ProxyReadbackTests")
     enableAssertions = true
 }
+
+// Injected preferences failures and native CF encoding only; never writes host preferences.
+tasks.register<JavaExec>("runMacosNativeProxyWriterTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.NativeProxyWriterTests")
+    enableAssertions = true
+}
+
