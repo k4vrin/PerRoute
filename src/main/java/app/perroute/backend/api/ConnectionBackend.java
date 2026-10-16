@@ -30,6 +30,8 @@ public interface ConnectionBackend {
     void stopPerAppSidecar() throws Exception;
     void applySystemProxy() throws Exception;
     void restoreSystemProxy() throws Exception;
+    /** Read-only check of an owned helper session. Backends without a helper session do not monitor it. */
+    default void verifySystemProxySession() throws Exception { }
 
     TunnelStatus checkTunnel(int socksPort);
     Map<String, Long> readInboundCounters() throws Exception;

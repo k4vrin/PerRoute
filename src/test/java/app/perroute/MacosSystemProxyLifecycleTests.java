@@ -19,6 +19,18 @@ public final class MacosSystemProxyLifecycleTests {
         MacConnectionBackend backend;
         boolean pending, failApply, refuseRestore;
         int applies, restores;
+        boolean lostSession, unavailableSession;
+        volatile int observations;
+        public synchronized void verifySession() throws Exception {
+            observations++;
+            if (lostSession || unavailableSession) throw new java.io.IOException("Fixture helper session lost");
+        }
+        synchronized void loseSession(boolean restored) {
+            lostSession = true;
+            if (restored) pending = false;
+        }
+        synchronized void failSession() { unavailableSession = true; refuseRestore = true; }
+        synchronized void resetSession() { lostSession = false; unavailableSession = false; refuseRestore = false; }
         List<String> events = new CopyOnWriteArrayList<>();
         public synchronized void apply() throws Exception {
             applies++; events.add("apply");
@@ -76,6 +88,39 @@ public final class MacosSystemProxyLifecycleTests {
                     check(!controller.disconnect().getOk(), "Already-disconnected action retries and reports pending cleanup");
                     life.refuseRestore = false;
                     check(controller.disconnect().getOk() && !life.pending(), "Recovery succeeds on explicit retry");
+                    check(controller.connect().getOk(), "Connect before helper restart");
+                    int beforeHealthy = life.observations;
+                    await(() -> life.observations > beforeHealthy, "Connected session is observed by the periodic monitor");
+                    check(controller.isConnected(), "Healthy helper does not interrupt a connection");
+                    controller.setAutoReconnect(true);
+                    life.loseSession(true);
+                    await(() -> !controller.isConnected() && !backend.isRunning(), "Helper restart disconnects UI and owned core");
+                    check(controller.connectionPhase() == app.perroute.compose.controller.ConnectionPhase.DISCONNECTED, "Lost helper exits Connected phase");
+                    int appliesAfterLoss = life.applies;
+                    Thread.sleep(1_200);
+                    check(life.applies == appliesAfterLoss && !backend.isRunning(), "Session loss does not automatically prepare or reconnect");
+                    life.resetSession();
+                    check(controller.connect().getOk(), "Explicit Connect after helper recovery");
+                    life.failSession();
+                    await(() -> !controller.isConnected() && !backend.isRunning(), "Unavailable helper stops core even when restore fails");
+                    check(life.pending(), "Failed recovery retains simulated lease");
+                    check(!controller.connect().getOk(), "Pending failed recovery blocks new Connect");
+                    life.resetSession();
+                    check(controller.disconnect().getOk(), "Explicit recovery retry succeeds after helper returns");
+                    controller.setMode(ConnectionMode.BROWSER_PROXY);
+                    check(controller.connect().getOk(), "Local proxy works without helper health");
+                    int beforeLocal = life.observations;
+                    life.loseSession(true);
+                    Thread.sleep(4_500);
+                    check(controller.isConnected() && life.observations == beforeLocal, "Local proxy does not observe helper sessions");
+                    check(controller.disconnect().getOk(), "Local proxy disconnects");
+                    life.resetSession();
+                    controller.setMode(ConnectionMode.SYSTEM_PROXY);
+                    check(controller.connect().getOk(), "Connect before pending retry cancellation");
+                    backend.stop();
+                    check(controller.disconnect().getOk(), "Disconnect cancels a scheduled core-exit reconnect");
+                    Thread.sleep(1_800);
+                    check(!controller.isConnected() && !backend.isRunning(), "Sleeping reconnect cannot reopen an explicitly ended session");
                     check(controller.connect().getOk(), "Connect before close");
                 }
                 check(!life.pending() && !backend.isRunning(), "Close restores and stops owned engine");
@@ -96,6 +141,11 @@ public final class MacosSystemProxyLifecycleTests {
                 default -> { try { yield method.invoke(backend, values); } catch (InvocationTargetException error) { throw error.getCause(); } }
             };
         });
+    }
+    static void await(java.util.function.BooleanSupplier condition, String message) throws Exception {
+        long deadline = System.nanoTime() + 12_000_000_000L;
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) Thread.sleep(25);
+        check(condition.getAsBoolean(), message);
     }
     static void check(boolean value, String message) { checks++; if (!value) throw new AssertionError(message); }
 }

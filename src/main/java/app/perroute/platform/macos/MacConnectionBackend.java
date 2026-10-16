@@ -84,6 +84,9 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
         if (systemProxy == null) throw unavailable("System proxy recovery");
         systemProxy.restore();
     }
+    @Override public void verifySystemProxySession() throws Exception {
+        if (systemProxy != null) systemProxy.verifySession();
+    }
     @Override public void applyPerApp(List<String> apps) { throw unavailable("Per-app routing"); }
     @Override public void restorePerApp() { throw unavailable("Per-app recovery"); }
     @Override public void stopPerAppSidecar() { throw unavailable("Per-app sidecar"); }

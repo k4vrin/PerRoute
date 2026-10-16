@@ -19,6 +19,27 @@ public final class HelperLifecycleTests {
         check(fixture.calls.equals(List.of("legacy-restore", "restore")), "Disconnect never requests registration");
         check(!fixture.active && fixture.writer.configured.equals(fixture.original), "Original settings restored");
 
+        var healthy = new Fixture(); healthy.service.apply(); healthy.calls.clear();
+        healthy.service.verifySession();
+        check(healthy.calls.equals(List.of("status")), "Health only observes status without setup or mutation");
+        check(healthy.marker.pending && healthy.active, "Healthy observation preserves recovery custody");
+        for (var reply : List.of(Map.<String, Object>of("pending", false, "owned", false),
+                Map.<String, Object>of("pending", true, "owned", false),
+                Map.<String, Object>of("pending", false, "owned", true),
+                Map.<String, Object>of("pending", true), Map.<String, Object>of(),
+                Map.<String, Object>of("pending", "true", "owned", true))) {
+            healthy.statusReply = reply; healthy.calls.clear();
+            expectFailure(healthy.service::verifySession);
+            check(healthy.calls.equals(List.of("status")) && healthy.marker.pending,
+                    "Lost/malformed session cannot prepare, mutate, restore or clear recovery intent");
+        }
+        healthy.failStatus = true; healthy.calls.clear();
+        expectFailure(healthy.service::verifySession);
+        check(healthy.calls.equals(List.of("status")) && healthy.marker.pending, "Unavailable helper retains recovery marker");
+        healthy.failStatus = false; healthy.statusReply = null; healthy.service.restore();
+        expectFailure(healthy.service::verifySession);
+        check(!healthy.marker.pending, "Observation after verified restore cannot recreate a marker");
+
         var denied = new Fixture(); denied.denyPrepare = true;
         expectFailure(denied.service::apply);
         check(!denied.calls.contains("apply") && !denied.active, "Approval denial cannot write settings or fall back");
@@ -89,6 +110,8 @@ public final class HelperLifecycleTests {
         final ProxySettings original = writer.configured;
         final String serviceId = writer.inventory().services().getFirst().id();
         final List<String> calls = new ArrayList<>();
+        Map<String, Object> statusReply;
+        boolean failStatus;
         boolean active, denyPrepare, failLegacy, failApply, invalidReply, lagEffective, failRestore, pendingRestore, unregistered, wrongPorts;
         final MacSystemProxyLifecycle legacy = new MacSystemProxyLifecycle() {
             @Override public void apply() { throw new AssertionError("Helper must never fall back to direct apply"); }
@@ -99,6 +122,10 @@ public final class HelperLifecycleTests {
         @Override public Map<String, Object> request(String operation, Map<String, Object> values) throws IOException {
             calls.add(operation);
             switch (operation) {
+                case "status" -> {
+                    if (failStatus) throw new IOException("Simulated XPC interruption");
+                    return statusReply != null ? statusReply : Map.of("pending", active, "owned", active);
+                }
                 case "prepare" -> { if (denyPrepare) throw new IOException("Approval required"); return Map.of(); }
                 case "restore" -> {
                     if (unregistered) return Map.of("pending", false, "registered", false);

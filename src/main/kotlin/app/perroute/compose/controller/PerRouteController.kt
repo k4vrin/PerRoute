@@ -2287,8 +2287,11 @@ class PerRouteController @JvmOverloads constructor(
                 var delayMillis = 1_500L
                 while (desiredConnected && autoReconnect() && !closing) {
                     try { Thread.sleep(delayMillis) } catch (_: InterruptedException) { break }
-                    if (isConnected()) break
-                    val result = connect()
+                    // Disconnect may cancel intent while this retry sleeps. Check under the same
+                    // lock as Connect so an old retry cannot reopen a deliberately ended session.
+                    val result = synchronized(this@PerRouteController) {
+                        if (!desiredConnected || !autoReconnect() || closing || isConnected()) null else connect()
+                    } ?: break
                     if (result.ok && isConnected()) { log("Connection restored automatically."); break }
                     log("Auto reconnect is waiting: ${result.message}")
                     delayMillis = (delayMillis * 2).coerceAtMost(20_000L)
@@ -2297,11 +2300,24 @@ class PerRouteController @JvmOverloads constructor(
         }
     }
 
+    @Synchronized
+    private fun reconcileSystemProxySession() {
+        if (closing || phase != ConnectionPhase.CONNECTED || activeMode != ConnectionMode.SYSTEM_PROXY) return
+        val failure = runCatching { backend.verifySystemProxySession() }.exceptionOrNull() ?: return
+        // Serialize the observation and cleanup with Connect/switch/Disconnect. A delayed failure
+        // must never disconnect a newer session, or automatically reopen approval through reconnect.
+        connectionReady = false
+        log("System proxy session could not be verified: ${message(failure)}")
+        val result = disconnect()
+        if (!result.ok) log(result.message)
+    }
+
     private fun startNetworkMonitor() {
         Thread.ofVirtual().name("perroute-network-monitor").start {
             var previous = networkSignature()
             while (!closing) {
                 try { Thread.sleep(4_000) } catch (_: InterruptedException) { break }
+                reconcileSystemProxySession()
                 val current = networkSignature()
                 if (current != previous) {
                     previous = current

@@ -101,6 +101,15 @@ public final class HelperSystemProxyLifecycle implements MacSystemProxyLifecycle
         marker.clear();
     }
 
+    @Override public synchronized void verifySession() throws IOException {
+        // A surviving recovery journal alone is not a live lease. After a daemon restart it may still
+        // be awaiting recovery, so require ownership by this exact authenticated XPC connection.
+        var response = client.request("status", Map.of());
+        if (!Boolean.TRUE.equals(response.get("pending")) || !Boolean.TRUE.equals(response.get("owned")))
+            throw new IOException("The background proxy session was lost. Disconnecting; proxy recovery will be retried. Connect again after checking the service approval.");
+        // Observation never clears the pending marker or prepares/reapplies a connection.
+    }
+
     private void verify(Map<String, Object> response, String expectedId, ProxySettings expected) throws IOException, InterruptedException {
         Object service = response.get("service"), values = response.get("settings");
         if (!(service instanceof String id) || (expectedId != null && !expectedId.equals(id)) || !(values instanceof Map<?, ?> map))

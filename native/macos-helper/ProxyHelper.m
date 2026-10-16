@@ -172,7 +172,9 @@ static NSDictionary *Apply(NSDictionary *request, uid_t uid, NSXPCConnection *co
             NSString *operation = request[@"operation"];
             if ([operation isEqual:@"status"] && request.count == 2) {
                 NSDictionary *lease = [Journal load:&error];
-                result = @{@"pending": @(lease != nil)};
+                // A journal surviving helper restart represents recovery intent, not a live client lease.
+                BOOL owned = lease && LeaseConnection == connection && [lease[@"uid"] unsignedIntValue] == self.uid;
+                result = @{@"pending": @(lease != nil), @"owned": @(owned)};
             } else if ([operation isEqual:@"restore"] && request.count == 2) result = Restore(self.uid, &error);
             else if ([operation isEqual:@"apply"]) result = Apply(request, self.uid, connection, &error);
             else error = PRError(@"Unsupported helper operation");
