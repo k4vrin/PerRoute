@@ -74,3 +74,6 @@ $RECYCLE.BIN/
 # Local design drafts and working notes (not part of the published project)
 # ---------------------------------------------------------------------------
 /docs/design/
+
+# Local Python build-tool caches
+__pycache__/

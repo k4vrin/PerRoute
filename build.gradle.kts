@@ -426,3 +426,9 @@ tasks.register<JavaExec>("runMacosProxyHelperBridgeTests") {
     args(macosHelperOutput.get().file("libPerRouteProxyBridge.dylib").asFile.absolutePath)
     enableAssertions = true
 }
+
+// Status-only native feasibility checks do not create identities or register a daemon.
+tasks.register<Exec>("runMacosSelfSignedHelperProbeTests") {
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine("python3", "scripts/macos_helper_probe.py", "test")
+}
