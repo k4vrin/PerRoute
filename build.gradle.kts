@@ -290,3 +290,18 @@ tasks.register<JavaExec>("runMacosProxyOwnershipTests") {
     mainClass.set("app.perroute.platform.macos.proxy.SystemProxyOwnershipTests")
     enableAssertions = true
 }
+
+tasks.register<JavaExec>("runMacosNetworkServiceTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.NetworkServiceInventoryTests")
+    enableAssertions = true
+}
+
+// Read-only host inspection plus in-memory CoreFoundation fixtures; no native settings writer is bound.
+tasks.register<JavaExec>("runMacosNativeNetworkServiceTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.NativeNetworkServiceTests")
+    enableAssertions = true
+}
