@@ -411,6 +411,10 @@ internal class Shell(
 
 /** Entry point: single-instance check, state loading, then the main window, the tray icon and the Quick Access panel. */
 fun main(args: Array<String>) {
+    if (args.firstOrNull() in setOf("--proxy-helper-status", "--proxy-helper-unregister")) {
+        if (args.size != 1) kotlin.system.exitProcess(64)
+        kotlin.system.exitProcess(app.perroute.platform.macos.proxy.MacHelperMaintenance.run(args[0]))
+    }
     // The isolated native probe must run in the real app process before platform services are constructed.
     if (args.firstOrNull() == "--extension-spike") {
         app.perroute.platform.macos.spike.MacExtensionSpike.main(args.drop(1).toTypedArray())

@@ -19,7 +19,7 @@ public final class HelperBridgeTests {
         Path path = Path.of(args[0]);
         var client = new HelperSystemProxyLifecycle.NativeClient(path);
         if (!Boolean.FALSE.equals(client.request("availability", Map.of()).get("managed"))) throw new AssertionError("CLI JVM selected managed helper");
-        for (String operation : new String[]{"prepare", "apply", "restore", "status", "unknown"}) {
+        for (String operation : new String[]{"prepare", "apply", "restore", "status", "service-status", "unregister", "unknown"}) {
             try { client.request(operation, Map.of()); throw new AssertionError("Unbundled caller accepted: " + operation); }
             catch (IOException expected) {
                 if (!expected.getMessage().contains("signed PerRoute")) throw expected;
@@ -34,6 +34,6 @@ public final class HelperBridgeTests {
                 if (!Boolean.FALSE.equals(response.get("ok"))) throw new AssertionError("Malformed request accepted");
             } finally { bridge.perroute_helper_free(result); }
         }
-        System.out.println("Native helper bridge: 10 checks passed; no registration, authorization or host writes");
+        System.out.println("Native helper bridge: 12 checks passed; no registration, authorization or host writes");
     }
 }

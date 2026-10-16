@@ -8,6 +8,7 @@
 static dispatch_queue_t Work;
 static PRRootJournal *Journal;
 static NSXPCConnection *LeaseConnection;
+static NSXPCConnection *RetiringConnection;
 static dispatch_source_t RecoveryTimer;
 static NSXPCListener *Listener;
 static id ListenerDelegate;
@@ -116,6 +117,7 @@ static NSDictionary *Restore(uid_t caller, NSError **error) {
 }
 
 static NSDictionary *Apply(NSDictionary *request, uid_t uid, NSXPCConnection *connection, NSError **error) {
+    if (RetiringConnection) { *error = PRError(@"The helper is being removed; no new proxy lease is allowed"); return nil; }
     id identifier = request[@"service"], http = request[@"http"], socks = request[@"socks"], expected = request[@"expected"];
     NSSet *keys = [NSSet setWithArray:@[@"version", @"operation", @"service", @"http", @"socks", @"expected"]];
     if (![keys isEqualToSet:[NSSet setWithArray:request.allKeys]] ||
@@ -163,7 +165,7 @@ static NSDictionary *Apply(NSDictionary *request, uid_t uid, NSXPCConnection *co
         NSDictionary *result = nil;
         NSData *encoded = [NSPropertyListSerialization dataWithPropertyList:request format:NSPropertyListBinaryFormat_v1_0 options:0 error:&error];
         if (!encoded || encoded.length > 65536 || ![request[@"version"] isEqual:@(PRProtocolVersion)]) error = PRError(@"Unsupported or oversized helper request");
-        else if (LeaseConnection && LeaseConnection != connection) error = PRError(@"Another PerRoute session owns the proxy connection");
+        else if ((LeaseConnection && LeaseConnection != connection) || (RetiringConnection && RetiringConnection != connection)) error = PRError(@"Another PerRoute session owns the proxy connection");
         else {
             uid_t console = 0;
             CFStringRef user = SCDynamicStoreCopyConsoleUser(NULL, &console, NULL);
@@ -175,6 +177,14 @@ static NSDictionary *Apply(NSDictionary *request, uid_t uid, NSXPCConnection *co
                 // A journal surviving helper restart represents recovery intent, not a live client lease.
                 BOOL owned = lease && LeaseConnection == connection && [lease[@"uid"] unsignedIntValue] == self.uid;
                 result = @{@"pending": @(lease != nil), @"owned": @(owned)};
+            } else if ([operation isEqual:@"retire"] && request.count == 2) {
+                result = Restore(self.uid, &error);
+                if (result && !error) {
+                    // Keep this authenticated connection as a maintenance barrier until unregister
+                    // completes or its client exits. No other client may apply between restore/remove.
+                    RetiringConnection = connection;
+                    result = @{@"pending": @NO, @"retired": @YES};
+                }
             } else if ([operation isEqual:@"restore"] && request.count == 2) result = Restore(self.uid, &error);
             else if ([operation isEqual:@"apply"]) result = Apply(request, self.uid, connection, &error);
             else error = PRError(@"Unsupported helper operation");
@@ -203,6 +213,7 @@ static NSDictionary *Apply(NSDictionary *request, uid_t uid, NSXPCConnection *co
     connection.invalidationHandler = ^{
         NSXPCConnection *invalidated = weakConnection;
         dispatch_async(Work, ^{
+            if (invalidated && RetiringConnection == invalidated) RetiringConnection = nil;
             if (invalidated && LeaseConnection == invalidated) {
                 NSError *error = nil;
                 Restore(0, &error);

@@ -432,3 +432,11 @@ tasks.register<Exec>("runMacosSelfSignedHelperProbeTests") {
     onlyIf { System.getProperty("os.name") == "Mac OS X" }
     commandLine("python3", "scripts/macos_helper_probe.py", "test")
 }
+
+// Simulated maintenance never registers/unregisters a service or changes host networking.
+tasks.register<JavaExec>("runMacosHelperMaintenanceTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.HelperMaintenanceTests")
+    enableAssertions = true
+}

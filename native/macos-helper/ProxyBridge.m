@@ -61,6 +61,22 @@ static NSDictionary *Perform(NSDictionary *request) {
     }
     if (!managed || !TrustedHelper(team)) return Failure(@"The background proxy service requires a consistently signed PerRoute installation. Use Local proxy until setup is complete");
     SMAppService *service = [SMAppService daemonServiceWithPlistName:[PRHelperLabel stringByAppendingString:@".plist"]];
+    if ([operation isEqual:@"service-status"]) {
+        return @{@"ok": @YES, @"version": @(PRProtocolVersion), @"result":
+            @{@"status": @(service.status), @"registered": @(service.status != SMAppServiceStatusNotRegistered)}};
+    }
+    if ([operation isEqual:@"unregister"]) {
+        if (request.count != 2) return Failure(@"Invalid maintenance request");
+        if (service.status != SMAppServiceStatusEnabled)
+            return Failure(@"Enable the service and restore pending settings before removing it");
+        NSDictionary *restored = Remote(@{@"version": @(PRProtocolVersion), @"operation": @"retire"}, team);
+        if (![restored[@"ok"] isEqual:@YES] || ![restored[@"result"][@"pending"] isEqual:@NO] || ![restored[@"result"][@"retired"] isEqual:@YES])
+            return Failure(@"Proxy recovery could not be confirmed. The service was not unregistered");
+        NSError *error = nil;
+        if (![service unregisterAndReturnError:&error]) return Failure(@"Could not unregister the restored service. Retry before replacing or removing the app");
+        return @{@"ok": @YES, @"version": @(PRProtocolVersion), @"result":
+            @{@"pending": @NO, @"registered": @(service.status != SMAppServiceStatusNotRegistered)}};
+    }
     if ([operation isEqual:@"prepare"]) {
         NSError *error = nil;
         if (service.status == SMAppServiceStatusNotRegistered || service.status == SMAppServiceStatusNotFound) {
