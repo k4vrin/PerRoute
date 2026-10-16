@@ -82,6 +82,7 @@ private class MemoryPreferences : AbstractPreferences(null, "") {
 }
 
 private class DemoBackend(private val perAppDriver: Boolean = true) : ConnectionBackend {
+    override fun capabilities() = app.perroute.backend.api.BackendCapabilities.windows()
     @Volatile private var running = false
     @Volatile private var startedAt = 0L
     @Volatile private var gatewayOn = false

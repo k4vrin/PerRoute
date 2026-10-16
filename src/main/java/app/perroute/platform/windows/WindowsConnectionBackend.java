@@ -31,6 +31,9 @@ import java.util.function.Consumer;
 
 /** Delegates to the existing Windows managers without replacing their connection or recovery behavior. */
 public final class WindowsConnectionBackend implements ConnectionBackend, StartupRecovery {
+    @Override public app.perroute.backend.api.BackendCapabilities capabilities() {
+        return app.perroute.backend.api.BackendCapabilities.windows();
+    }
     private final Path dataDirectory;
     private CoreInstaller coreInstaller;
     private XrayProcessManager xray;

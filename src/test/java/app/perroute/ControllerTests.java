@@ -638,6 +638,7 @@ final class ControllerTests {
     }
 
     static final class FakeBackend implements ConnectionBackend {
+        @Override public app.perroute.backend.api.BackendCapabilities capabilities() { return app.perroute.backend.api.BackendCapabilities.windows(); }
         private final List<Consumer<Boolean>> runningListeners = new ArrayList<>();
         final List<Integer> failingPorts = new java.util.concurrent.CopyOnWriteArrayList<>();
         volatile boolean running;

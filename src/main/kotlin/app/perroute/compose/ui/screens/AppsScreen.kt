@@ -144,6 +144,10 @@ private fun draftRoute(shell: Shell, path: String): DraftRoute {
 /** Selecting applications and, with Advanced routing on, how each one picks its server. Edits go to the draft until Save changes. */
 @Composable
 internal fun AppsScreen(shell: Shell) {
+    if (!shell.controller.capabilities().perApp()) {
+        InfoBanner("Per-app routing and application discovery are unavailable in this local proxy preview. Configure individual apps to use its loopback SOCKS or HTTP proxy.", Modifier.fillMaxWidth())
+        return
+    }
     val scope = rememberCoroutineScope()
     val draft = shell.draft
     var query by remember { mutableStateOf("") }

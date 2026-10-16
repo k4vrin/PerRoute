@@ -30,13 +30,19 @@ public final class PlatformBoundaryTests {
             check(windows.connections() instanceof WindowsConnectionBackend, "Windows selects the existing adapter");
             check(windows.connections() == windows.recovery(), "Connection and recovery use the same provider");
             check(!Files.exists(data), "Provider selection must not create data or inspect the host");
-            for (String os : new String[] {"Darwin", "Mac OS X", "Linux", "FreeBSD", "", "notwindows", null}) {
+            for (String os : new String[] {"Linux", "FreeBSD", "", "notwindows", null}) {
                 try {
                     PlatformBootstrap.forOs(os, data);
                     throw new AssertionError("Unsupported OS selected a backend: " + os);
                 } catch (UnsupportedOperationException expected) {
                     check(expected.getMessage().contains("does not yet support"), "Unsupported status is explicit");
                 }
+            }
+            for (String mac : new String[] {"Darwin", "Mac OS X"}) {
+                var preview = PlatformBootstrap.forOs(mac, data);
+                check(preview.connections() instanceof app.perroute.platform.macos.MacConnectionBackend, "macOS selects its local adapter");
+                check(!preview.connections().capabilities().networkRecovery(), "macOS never enables network recovery");
+                check(!Files.exists(data), "macOS provider selection must not create state");
             }
             check(!Files.exists(data), "Unsupported hosts must not create platform state");
             String previousOs = System.getProperty("os.name");

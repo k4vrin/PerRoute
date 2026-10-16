@@ -11,6 +11,7 @@ import java.util.function.Consumer;
 
 /** Machine operations used by the desktop controller. Implementations own platform-specific effects. */
 public interface ConnectionBackend {
+    BackendCapabilities capabilities();
     boolean coreReady();
     boolean perAppReady();
     boolean elevated();

@@ -18,9 +18,20 @@ public final class PlatformBootstrap {
     }
 
     public static PlatformServices forOs(String osName, Path dataDirectory) {
+        if (isMac(osName)) {
+            var runtime = app.perroute.service.XrayRuntime.forPlatform(osName, System.getProperty("os.arch"),
+                    AppDirectories.coreDirectory());
+            var backend = new app.perroute.platform.macos.MacConnectionBackend(runtime, dataDirectory);
+            return new PlatformServices(backend, backend);
+        }
         requireWindows(osName);
         var backend = new WindowsConnectionBackend(dataDirectory);
         return new PlatformServices(backend, backend);
+    }
+
+    public static boolean isMac(String name) {
+        String os = name == null ? "" : name.trim().toLowerCase(Locale.ROOT);
+        return os.equals("mac os x") || os.equals("darwin");
     }
 
     private static void requireWindows(String osName) {

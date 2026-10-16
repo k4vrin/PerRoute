@@ -416,8 +416,23 @@ fun main(args: Array<String>) {
         app.perroute.platform.macos.spike.MacExtensionSpike.main(args.drop(1).toTypedArray())
         return
     }
+    val macPreview = PlatformBootstrap.isMac(System.getProperty("os.name"))
+    if (macPreview && ("--guard" in args || "--recover" in args)) {
+        System.err.println("Network guard/recovery is unavailable in the macOS local preview.")
+        return
+    }
+    val preview = if (macPreview) app.perroute.platform.macos.MacPreviewSession.open() else null
+    try {
+        runDesktop(args, preview)
+    } finally {
+        preview?.close()
+    }
+}
+
+private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos.MacPreviewSession?) {
     val platform = try {
-        PlatformBootstrap.create()
+        if (preview != null) PlatformBootstrap.forOs(System.getProperty("os.name"), preview.directory())
+        else PlatformBootstrap.create()
     } catch (error: UnsupportedOperationException) {
         System.err.println(error.message)
         return
@@ -436,7 +451,7 @@ fun main(args: Array<String>) {
         lock.close()
         return
     }
-    val store = AppStateStore(dataDirectory.resolve("state.bin"))
+    val store = if (preview != null) AppStateStore.inMemory() else AppStateStore(dataDirectory.resolve("state.bin"))
     val stateLoader = java.util.concurrent.CompletableFuture.supplyAsync {
         runCatching { store.load() }
     }
@@ -448,8 +463,27 @@ fun main(args: Array<String>) {
     val loaded = stateLoader.join()
     val state = loaded.getOrElse { app.perroute.model.AppState() }
     Perf.mark("state.loaded")
-    val controller = PerRouteController(state, store, platform.connections())
+    if (preview != null) state.setConnectionMode(ConnectionMode.BROWSER_PROXY)
+    val controller = if (preview == null) PerRouteController(state, store, platform.connections()) else {
+        val preferences = app.perroute.platform.macos.MemoryPreferences().apply {
+            putBoolean("v3.initialized", true)
+            putBoolean("v3.qualityBackground", false)
+            putBoolean("v3.routeMonitoring", false)
+            putBoolean("v3.trafficGateway", false)
+            putBoolean("autoReconnect", false)
+            putBoolean("autoFailover", false)
+            putBoolean("autoSpeedTest", false)
+        }
+        PerRouteController(state, store, platform.connections(), preferences)
+    }
     loaded.exceptionOrNull()?.let { controller.reportStartupProblem("Saved settings could not be opened: ${it.message ?: it.javaClass.simpleName}") }
+    // The native macOS Quit menu may exit the JVM without unwinding the Compose application call.
+    val previewShutdown = preview?.let {
+        Thread({
+            controller.close()
+            runCatching { it.close() }
+        }, "perroute-preview-cleanup").also { Runtime.getRuntime().addShutdownHook(it) }
+    }
     Perf.mark("controller.ready")
     ActivePalette = if (controller.isDarkTheme()) DarkPalette else LightPalette
 
@@ -565,7 +599,7 @@ fun main(args: Array<String>) {
         }
         Window(
             visible = windowVisible,
-            onCloseRequest = { hideMainWindow() },
+            onCloseRequest = { if (nativeTrayIcon == null) exitPerRoute() else hideMainWindow() },
             state = windowState,
             title = "PerRoute",
             icon = painterResource("icons/perroute-icon-256.png"),
@@ -664,8 +698,11 @@ fun main(args: Array<String>) {
             Files.createDirectories(dataDirectory)
             Files.writeString(dataDirectory.resolve("compose-error.log"), trace)
         }
+        if (preview != null) System.err.print(trace)
+    } finally {
         controller.close()
         lock.close()
+        previewShutdown?.let { runCatching { Runtime.getRuntime().removeShutdownHook(it) } }
     }
 }
 

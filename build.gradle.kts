@@ -242,3 +242,12 @@ tasks.register<JavaExec>("runMacosEngineSmoke") {
     args(layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
     enableAssertions = true
 }
+
+tasks.register<JavaExec>("runMacosDesktopTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.MacosDesktopTests")
+    args(layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
+    systemProperty("perroute.portOffset", "20000")
+    enableAssertions = true
+}

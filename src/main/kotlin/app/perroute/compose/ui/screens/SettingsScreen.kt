@@ -246,6 +246,10 @@ private fun ConnectionSettings(shell: Shell) {
     }
     val locked = shell.locked
     SettingsPage("Connection") {
+        if (!shell.controller.capabilities().persistentState()) {
+            InfoBanner("macOS local preview: imported servers and settings stay in memory and are discarded on quit. System networking is unchanged.", Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
+        }
         FieldLabel("Connection mode")
         if (locked) {
             InfoBanner("Disconnect before changing connection settings.", Modifier.fillMaxWidth(), Amber, Icons.Rounded.Lock)
@@ -253,8 +257,9 @@ private fun ConnectionSettings(shell: Shell) {
         }
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             ConnectionMode.values().filter { it != ConnectionMode.TUN_COMPATIBILITY }.forEach { mode ->
-                val driverMissing = mode == ConnectionMode.NATIVE_PER_APP && environment?.perAppReady == false
-                ModeRow(mode, mode == shell.mode, !locked && !driverMissing && !shell.busy, driverMissing) {
+                val supported = shell.controller.capabilities().supports(mode)
+                val driverMissing = supported && mode == ConnectionMode.NATIVE_PER_APP && environment?.perAppReady == false
+                ModeRow(mode, mode == shell.mode, supported && !locked && !driverMissing && !shell.busy, driverMissing, supported) {
                     shell.controller.setMode(mode)
                     shell.refresh()
                 }
@@ -267,7 +272,7 @@ private fun ConnectionSettings(shell: Shell) {
             detail = (if (shell.advanced) "On: selected apps can use a custom server. Apps without one follow the main server."
                 else "Off: all selected apps use the main server.") + " Saved custom assignments are kept when this is off." +
                 (if (!shell.perApp) " Applies in Smart per-app only; ${modeLabel(shell.mode)} ignores assignments." else ""),
-            checked = shell.advanced, enabled = !locked && !shell.busy, badge = true
+            checked = shell.advanced, enabled = shell.controller.capabilities().perApp() && !locked && !shell.busy, badge = true
         ) { enabled ->
             val result = shell.controller.setAdvancedRouting(enabled)
             shell.refresh()
@@ -292,7 +297,7 @@ private fun ConnectionSettings(shell: Shell) {
 
 /** One connection mode as a radio row. */
 @Composable
-private fun ModeRow(mode: ConnectionMode, selected: Boolean, enabled: Boolean, driverMissing: Boolean, onClick: () -> Unit) {
+private fun ModeRow(mode: ConnectionMode, selected: Boolean, enabled: Boolean, driverMissing: Boolean, supported: Boolean, onClick: () -> Unit) {
     val (title, detail) = when (mode) {
         ConnectionMode.NATIVE_PER_APP -> "Smart per-app" to "Only selected apps use the proxy"
         ConnectionMode.BROWSER_PROXY -> "Local proxy" to "Set a SOCKS5 or HTTP proxy inside individual apps"
@@ -317,7 +322,7 @@ private fun ModeRow(mode: ConnectionMode, selected: Boolean, enabled: Boolean, d
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
             Text(title, color = White, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-            Text(if (driverMissing) "Needs the per-app driver from the Full Installer. See Components." else detail,
+            Text(if (!supported) "Unavailable in this macOS local preview." else if (driverMissing) "Needs the per-app driver from the Full Installer. See Components." else detail,
                 color = if (driverMissing) Amber else Muted, fontSize = 10.5.sp)
         }
         RadioMark(selected)
@@ -341,7 +346,7 @@ private fun AutomationSettings(shell: Shell) {
             FeatureToggleRow(Icons.Rounded.SwapHoriz, "Main server failover", "After three failed checks, switch the main server to the fastest reachable one.", autoFailover) {
                 autoFailover = it; controller.setAutoFailover(it)
             }
-            FeatureToggleRow(Icons.Rounded.Shield, "Per-app kill switch", "Block selected apps while their tunnel is unavailable.", killSwitch) {
+            if (controller.capabilities().perApp()) FeatureToggleRow(Icons.Rounded.Shield, "Per-app kill switch", "Block selected apps while their tunnel is unavailable.", killSwitch) {
                 killSwitch = it; controller.setKillSwitch(it)
             }
             FeatureToggleRow(Icons.Rounded.Speed, "Fastest main server on connect", "Measure reachable servers and use the lowest latency as the main server before connecting.", fastestOnConnect) {
@@ -398,6 +403,10 @@ private fun UpdateSettings(shell: Shell) {
         }
     }
     SettingsPage("Updates") {
+        if (!controller.capabilities().updates()) {
+            InfoBanner("Automatic updates are unavailable in this preview. Signed distribution is planned for releases.", Modifier.fillMaxWidth())
+            return@SettingsPage
+        }
         FieldLabel("Signed update feed")
         TextInput(updateFeed, { updateFeed = it; controller.setUpdateFeedUrl(it) }, "Signed HTTPS manifest URL", icon = Icons.Rounded.Link)
         Spacer(Modifier.height(8.dp))
@@ -452,20 +461,20 @@ private fun ComponentSettings(shell: Shell) {
         val state = environment
         if (state == null) LoadingState("Checking installed components…", Modifier.fillMaxWidth())
         else Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            EnvironmentRow(Icons.Rounded.Dns, "Xray core", "Connection and protocol engine", state.coreReady, "Install", !shell.busy && !shell.locked) {
+            EnvironmentRow(Icons.Rounded.Dns, "Xray core", "Connection and protocol engine", state.coreReady, "Install", controller.capabilities().coreInstallation() && !shell.busy && !shell.locked) {
                 progress = "Preparing…"
                 shell.run(done = { progress = ""; scope.launch { reload() } }) {
                     controller.installCore { update -> EventQueue.invokeLater { progress = update } }
                 }
             }
-            EnvironmentRow(Icons.Rounded.Shield, "Per-app driver", "Routes arbitrary applications in Smart per-app mode", state.perAppReady, null, false) {}
+            if (controller.capabilities().perApp()) EnvironmentRow(Icons.Rounded.Shield, "Per-app driver", "Routes arbitrary applications in Smart per-app mode", state.perAppReady, null, false) {}
         }
         if (progress.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
             Text(progress, color = Amber, fontSize = 11.sp)
         }
         Spacer(Modifier.height(9.dp))
-        InfoBanner("The Full Installer sets up the per-app driver with a single Administrator approval. After that PerRoute connects without asking again. The portable build can reuse an existing driver installation.",
+        InfoBanner(if (controller.capabilities().perApp()) "The Full Installer sets up the per-app driver with a single Administrator approval. After that PerRoute connects without asking again. The portable build can reuse an existing driver installation." else "Local preview uses a matching Darwin Xray binary from the app resources or tools/xray/macos-arm64 or macos-x64. Automatic installation and per-app routing are unavailable.",
             Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
         SecondaryButton("Check again", icon = Icons.Rounded.Refresh) { scope.launch { environment = null; reload() } }

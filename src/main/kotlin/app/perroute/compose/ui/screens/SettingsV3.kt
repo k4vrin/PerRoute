@@ -165,6 +165,10 @@ internal fun RoutingSettings(shell: Shell) {
 /** Portable, optionally encrypted backups, and restoring them with a preview, path remapping and a rollback snapshot. */
 @Composable
 internal fun BackupSettings(shell: Shell) {
+    if (!shell.controller.capabilities().persistentState()) {
+        InfoBanner("Backup and restore are unavailable until secure persistent storage is implemented. This preview keeps imported settings only for the current session.", Modifier.fillMaxWidth())
+        return
+    }
     val controller = shell.controller
     val sections = remember { mutableStateMapOf<BackupService.Section, Boolean>().apply { BackupService.Section.entries.forEach { put(it, true) } } }
     var encrypt by remember { mutableStateOf(true) }

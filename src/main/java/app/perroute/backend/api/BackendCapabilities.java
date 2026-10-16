@@ -1,0 +1,17 @@
+package app.perroute.backend.api;
+
+import app.perroute.model.ConnectionMode;
+import java.util.Set;
+
+public record BackendCapabilities(Set<ConnectionMode> modes, boolean coreInstallation, boolean updates,
+                                  boolean applicationDiscovery, boolean networkRecovery, boolean persistentState) {
+    public BackendCapabilities { modes = Set.copyOf(modes); }
+    public boolean supports(ConnectionMode mode) { return modes.contains(mode); }
+    public boolean perApp() { return supports(ConnectionMode.NATIVE_PER_APP); }
+    public static BackendCapabilities windows() {
+        return new BackendCapabilities(Set.of(ConnectionMode.values()), true, true, true, true, true);
+    }
+    public static BackendCapabilities macosLocalPreview() {
+        return new BackendCapabilities(Set.of(ConnectionMode.BROWSER_PROXY), false, false, false, false, false);
+    }
+}

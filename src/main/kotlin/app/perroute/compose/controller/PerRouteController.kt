@@ -261,14 +261,21 @@ class PerRouteController @JvmOverloads constructor(
     /** Failovers are at least one full recovery cycle apart (about a minute by default), which prevents flapping. */
     private val failoverIntervalMillis = recoveryPolicy.backoffMaxMillis() * 2
 
+    fun capabilities() = backend.capabilities()
+    private fun restoreSystemProxyIfSupported() {
+        if (capabilities().supports(ConnectionMode.SYSTEM_PROXY)) backend.restoreSystemProxy()
+    }
+    private fun restorePerAppIfSupported() { if (capabilities().perApp()) backend.restorePerApp() }
+    private fun stopSidecarIfSupported() { if (capabilities().perApp()) backend.stopPerAppSidecar() }
+
     init {
-        if (state.connectionMode() == ConnectionMode.TUN_COMPATIBILITY) {
+        if (capabilities().supports(ConnectionMode.SYSTEM_PROXY) && state.connectionMode() == ConnectionMode.TUN_COMPATIBILITY) {
             state.setConnectionMode(ConnectionMode.SYSTEM_PROXY)
             save()
         }
         if (deduplicateNodes()) save()
         initializeVersionThreeDefaults()
-        runCatching { backend.restoreSystemProxy() }
+        runCatching { restoreSystemProxyIfSupported() }
             .onFailure { log("Could not restore stale system proxy settings: ${message(it)}") }
         backend.addLogListener(Consumer { line -> log(line) })
         // The inspector reads the core's own per-connection lines; they are kept in memory only.
@@ -284,12 +291,12 @@ class PerRouteController @JvmOverloads constructor(
                 stopTelemetry()
                 if (stoppedMode == ConnectionMode.NATIVE_PER_APP) {
                     if (!killSwitch()) Thread.ofVirtual().name("perroute-sidecar-cleanup").start {
-                        runCatching { backend.restorePerApp() }
+                        runCatching { restorePerAppIfSupported() }
                     }
                 }
                 if (stoppedMode == ConnectionMode.SYSTEM_PROXY) {
                     Thread.ofVirtual().name("perroute-system-proxy-cleanup").start {
-                        runCatching { backend.restoreSystemProxy() }
+                        runCatching { restoreSystemProxyIfSupported() }
                     }
                 }
                 log("The connection core stopped.")
@@ -297,7 +304,7 @@ class PerRouteController @JvmOverloads constructor(
                 scheduleReconnect()
             }
         })
-        if (updateFeedUrl().isNotBlank()) {
+        if (capabilities().updates() && updateFeedUrl().isNotBlank()) {
             Thread.ofVirtual().name("perroute-update-check").start {
                 val result = checkForUpdate()
                 if (result.ok && availableUpdateVersion() != null) log(result.message)
@@ -310,8 +317,8 @@ class PerRouteController @JvmOverloads constructor(
             if (!closing) {
                 runCatching { backend.stopGateway() }
                 runCatching { backend.stop() }
-                runCatching { backend.restoreSystemProxy() }
-                runCatching { if (!killSwitch()) backend.stopPerAppSidecar() }
+                runCatching { restoreSystemProxyIfSupported() }
+                runCatching { if (!killSwitch()) stopSidecarIfSupported() }
                 runCatching { Files.deleteIfExists(sessionMarker) }
             }
         }, "perroute-shutdown"))
@@ -322,10 +329,10 @@ class PerRouteController @JvmOverloads constructor(
     private fun recoverFromUnexpectedExit() {
         val unclean = Files.exists(sessionMarker)
         runCatching { Files.deleteIfExists(sessionMarker) }
-        if (unclean) log("PerRoute did not shut down cleanly last time. Network settings were restored.")
+        if (unclean) log(if (capabilities().networkRecovery()) "PerRoute did not shut down cleanly last time. Network recovery was attempted." else "The previous local preview did not shut down cleanly.")
         Thread.ofVirtual().name("perroute-crash-recovery").start {
-            runCatching { backend.stopOrphan() }
-            if (unclean && !killSwitch()) runCatching { backend.restorePerApp() }
+            if (capabilities().networkRecovery()) runCatching { backend.stopOrphan() }
+            if (unclean && !killSwitch()) runCatching { restorePerAppIfSupported() }
         }
     }
 
@@ -364,10 +371,11 @@ class PerRouteController @JvmOverloads constructor(
     fun setAutoSpeedTest(value: Boolean) = preferences.putBoolean("autoSpeedTest", value)
     fun autoReconnect(): Boolean = preferences.getBoolean("autoReconnect", true)
     fun setAutoReconnect(value: Boolean) = preferences.putBoolean("autoReconnect", value)
-    fun killSwitch(): Boolean = preferences.getBoolean("perAppKillSwitch", false)
+    fun killSwitch(): Boolean = capabilities().perApp() && preferences.getBoolean("perAppKillSwitch", false)
     fun setKillSwitch(value: Boolean) {
+        if (!capabilities().perApp()) return
         preferences.putBoolean("perAppKillSwitch", value)
-        if (!value && !isConnected()) Thread.ofVirtual().start { runCatching { backend.restorePerApp() } }
+        if (!value && !isConnected()) Thread.ofVirtual().start { runCatching { restorePerAppIfSupported() } }
     }
     fun updateFeedUrl(): String = preferences.get("updateFeedUrl", "")
     fun setUpdateFeedUrl(value: String) = preferences.put("updateFeedUrl", value.trim())
@@ -378,6 +386,7 @@ class PerRouteController @JvmOverloads constructor(
     fun downloadedUpdatePath(): Path? = downloadedUpdate?.takeIf(Files::isRegularFile)
 
     fun checkForUpdate(): ActionResult {
+        if (!capabilities().updates()) return ActionResult(false, "Automatic updates are unavailable on this platform.")
         val feed = updateFeedUrl()
         if (feed.isBlank()) return ActionResult(false, "Enter your signed HTTPS update feed URL first.")
         return try {
@@ -392,6 +401,7 @@ class PerRouteController @JvmOverloads constructor(
     }
 
     fun downloadAvailableUpdate(progress: (Int) -> Unit): ActionResult {
+        if (!capabilities().updates()) return ActionResult(false, "Automatic updates are unavailable on this platform.")
         val update = availableUpdate ?: return ActionResult(false, "Check for a new version first.")
         return try {
             val path = backend.downloadUpdate(update, Consumer(progress))
@@ -403,6 +413,7 @@ class PerRouteController @JvmOverloads constructor(
     }
 
     fun downloadAvailableUpdateInBackground(): ActionResult {
+        if (!capabilities().updates()) return ActionResult(false, "Automatic updates are unavailable on this platform.")
         val update = availableUpdate ?: return ActionResult(false, "Check for a new version first.")
         if (!updateDownloading.compareAndSet(false, true)) return ActionResult(true, "The update is already downloading.")
         updateProgress = 0
@@ -417,6 +428,7 @@ class PerRouteController @JvmOverloads constructor(
     }
 
     fun launchDownloadedUpdate(): ActionResult {
+        if (!capabilities().updates()) return ActionResult(false, "Automatic updates are unavailable on this platform.")
         val installer = downloadedUpdatePath()
             ?: return ActionResult(false, "Download and verify an update first.")
         return try {
@@ -895,6 +907,7 @@ class PerRouteController @JvmOverloads constructor(
      * fails, memory, the state file and the preferences are put back, so a half-restored setup never remains.
      */
     fun restoreBackup(request: RestoreRequest, mode: BackupService.Mode, remap: Map<String, String>): ActionResult {
+        if (!capabilities().persistentState()) return ActionResult(false, "Backup restore needs persistent secure storage, unavailable in this preview.")
         editLock("settings")?.let { return it }
         val currentBytes = synchronized(state) { store.serialize(state) }
         val preferencesBefore = preferenceSnapshot()
@@ -1012,9 +1025,10 @@ class PerRouteController @JvmOverloads constructor(
     }
 
     fun setMode(mode: ConnectionMode) {
+        if (!capabilities().supports(mode)) return
         if (phase != ConnectionPhase.DISCONNECTED || isConnected()) return
         if (state.connectionMode() == ConnectionMode.NATIVE_PER_APP && mode != ConnectionMode.NATIVE_PER_APP) {
-            Thread.ofVirtual().name("perroute-sidecar-cleanup").start { runCatching { backend.restorePerApp() } }
+            Thread.ofVirtual().name("perroute-sidecar-cleanup").start { runCatching { restorePerAppIfSupported() } }
         }
         state.setConnectionMode(mode)
         save()
@@ -1051,7 +1065,7 @@ class PerRouteController @JvmOverloads constructor(
             state.setActiveProfileId("")
             state.setSelectedNodeKey("")
             state.setAdvancedRouting(false)
-            state.setConnectionMode(ConnectionMode.SYSTEM_PROXY)
+            state.setConnectionMode(if (capabilities().supports(ConnectionMode.SYSTEM_PROXY)) ConnectionMode.SYSTEM_PROXY else ConnectionMode.BROWSER_PROXY)
             state.setRoutingMode(RoutingMode.INCLUDE_SELECTED)
             state.setMigratedFromV2(false)
         }
@@ -1071,7 +1085,7 @@ class PerRouteController @JvmOverloads constructor(
         // The last generated config still holds server credentials, so it goes as well.
         runCatching { Files.deleteIfExists(AppDirectories.dataDirectory().resolve("current-config.json")) }
         // The kill switch is off again after a reset; release anything it was still holding back.
-        Thread.ofVirtual().name("perroute-reset-cleanup").start { runCatching { backend.restorePerApp() } }
+        Thread.ofVirtual().name("perroute-reset-cleanup").start { runCatching { restorePerAppIfSupported() } }
         saveNow()
         log("PerRoute was reset to its initial state.")
         return ActionResult(true, "PerRoute was reset. Servers, apps, rules, profiles, history and settings were cleared.")
@@ -1081,6 +1095,7 @@ class PerRouteController @JvmOverloads constructor(
 
     /** Turning this off never deletes an assignment; it only stops applying them. */
     fun setAdvancedRouting(enabled: Boolean): ActionResult {
+        if (enabled && !capabilities().perApp()) return ActionResult(false, "Per-app routing is unavailable on this platform.")
         editLock("routing settings")?.let { return it }
         synchronized(state) { state.setAdvancedRouting(enabled) }
         save()
@@ -1150,6 +1165,7 @@ class PerRouteController @JvmOverloads constructor(
      */
     fun saveApplicationSetup(paths: Collection<String>, routes: Map<String, String>, advanced: Boolean,
                              autoApps: Set<String>, pools: Map<String, String>): ActionResult {
+        if (!capabilities().perApp()) return ActionResult(false, "Per-app routing is unavailable on this platform.")
         editLock("app routes")?.let { return it }
         val newlyAuto: Boolean
         synchronized(state) {
@@ -1208,7 +1224,7 @@ class PerRouteController @JvmOverloads constructor(
             if (!forceRefresh && refreshedAt - runningAppCacheAt < 3_000 && runningAppCache.isNotEmpty()) {
                 runningAppCache
             } else {
-                backend.runningApplications().filter(::isUserFacingApplication).also {
+                (if (capabilities().applicationDiscovery()) backend.runningApplications() else emptyList()).filter(::isUserFacingApplication).also {
                     runningAppCache = it
                     runningAppCacheAt = refreshedAt
                 }
@@ -1226,7 +1242,7 @@ class PerRouteController @JvmOverloads constructor(
             if (!forceRefresh && refreshedAt - installedAppCacheAt < 300_000 && installedAppCache.isNotEmpty()) {
                 installedAppCache
             } else {
-                backend.installedApplications().filter { isUserFacingApplication(it.name(), it.path()) }.also {
+                (if (capabilities().applicationDiscovery()) backend.installedApplications() else emptyList()).filter { isUserFacingApplication(it.name(), it.path()) }.also {
                     installedAppCache = it
                     installedAppCacheAt = refreshedAt
                 }
@@ -1468,6 +1484,7 @@ class PerRouteController @JvmOverloads constructor(
     fun applyScenario(id: String): ActionResult {
         if (isConnected() || phase != ConnectionPhase.DISCONNECTED) return ActionResult(false, "Disconnect before changing presets.")
         val scenario = SCENARIOS.firstOrNull { it.id == id } ?: return ActionResult(false, "Preset was not found.")
+        if (scenario.killSwitch && !capabilities().perApp()) return ActionResult(false, "This preset requires an unavailable per-app kill switch.")
         synchronized(state) {
             state.routeRules().removeIf { it.name().startsWith(SCENARIO_RULE_PREFIX) }
             state.routeRules().addAll(0, scenario.rules.map {
@@ -1651,6 +1668,7 @@ class PerRouteController @JvmOverloads constructor(
         if (isConnected() || phase != ConnectionPhase.DISCONNECTED) return ActionResult(false, "Disconnect before changing profiles.")
         val profile = synchronized(state) { state.profiles().firstOrNull { it.id() == id } }
             ?: return ActionResult(false, "Profile was not found.")
+        if (!capabilities().supports(profile.mode()) || (profile.advancedRouting() && !capabilities().perApp())) return ActionResult(false, "This profile requires unavailable routing features. Nothing was changed.")
         synchronized(state) {
             state.appPaths().clear(); state.appPaths().addAll(profile.applicationPaths().filter { Files.isRegularFile(Path.of(it)) })
             if (state.nodes().any { it.key() == profile.nodeKey() }) state.setSelectedNodeKey(profile.nodeKey())
@@ -1760,6 +1778,7 @@ class PerRouteController @JvmOverloads constructor(
     }
 
     fun installCore(progress: (String) -> Unit): ActionResult = try {
+        check(capabilities().coreInstallation()) { "Core installation is unavailable in this preview; supply a matching Darwin engine." }
         backend.installCore(Consumer { text ->
             progress(text)
             log(text)
@@ -1770,6 +1789,7 @@ class PerRouteController @JvmOverloads constructor(
     }
 
     fun installPerApp(progress: (String) -> Unit): ActionResult = try {
+        check(capabilities().perApp()) { "Driver installation is unavailable on this platform." }
         backend.installPerApp(Consumer { text ->
             progress(text)
             log(text)
@@ -1884,6 +1904,7 @@ class PerRouteController @JvmOverloads constructor(
             return ActionResult(false, "A connection operation is already in progress.")
         }
         val mode = state.connectionMode()
+        if (!capabilities().supports(mode)) return ActionResult(false, "This mode is unavailable. Choose Local proxy in Settings.")
         val apps = applications()
         var node = selectedNode() ?: return ActionResult(false, "Select a server first.")
         if ((mode == ConnectionMode.NATIVE_PER_APP || mode == ConnectionMode.TUN_COMPATIBILITY) && apps.isEmpty()) {
@@ -1893,7 +1914,7 @@ class PerRouteController @JvmOverloads constructor(
         val autoChoices = autoChoices(persist = true)
         val plan = routePlan()
         if (!plan.ready()) return ActionResult(false, missingRouteMessage(plan))
-        if (!backend.coreReady()) return ActionResult(false, "Xray is not installed. Install it from Settings.")
+        if (!backend.coreReady()) return ActionResult(false, if (capabilities().coreInstallation()) "Xray is not installed. Install it from Settings." else "A matching Darwin Xray executable is missing or unusable. See Settings > Components.")
         if (mode == ConnectionMode.NATIVE_PER_APP && !backend.perAppReady()) {
             return ActionResult(false, "Smart per-app needs the bundled Windows driver. Reinstall PerRoute with the Full Installer and approve its single UAC prompt, or choose Local proxy/System proxy.")
         }
@@ -1947,8 +1968,8 @@ class PerRouteController @JvmOverloads constructor(
                 "Local proxy ready: SOCKS5 127.0.0.1:${AppProxyLauncher.SOCKS_PORT} • HTTP 127.0.0.1:${AppProxyLauncher.HTTP_PORT}"
             else "Connected.")
         } catch (e: Throwable) {
-            if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) runCatching { backend.restorePerApp() }
-            if (mode == ConnectionMode.SYSTEM_PROXY) runCatching { backend.restoreSystemProxy() }
+            if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) runCatching { restorePerAppIfSupported() }
+            if (mode == ConnectionMode.SYSTEM_PROXY) runCatching { restoreSystemProxyIfSupported() }
             runCatching { backend.stopGateway() }
             backend.stop()
             activeMode = null
@@ -2040,8 +2061,8 @@ class PerRouteController @JvmOverloads constructor(
                 stateListeners.forEach { it(true) }
                 ActionResult(false, "Could not switch servers; the previous connection was restored: ${message(switchError)}")
             } else {
-                if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) runCatching { backend.restorePerApp() }
-                if (mode == ConnectionMode.SYSTEM_PROXY) runCatching { backend.restoreSystemProxy() }
+                if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) runCatching { restorePerAppIfSupported() }
+                if (mode == ConnectionMode.SYSTEM_PROXY) runCatching { restoreSystemProxyIfSupported() }
                 runCatching { backend.stopGateway() }
                 backend.stop()
                 activeMode = null
@@ -2064,9 +2085,9 @@ class PerRouteController @JvmOverloads constructor(
         val disconnectMode = activeMode ?: state.connectionMode()
         val cleanupError = runCatching {
             if (disconnectMode == ConnectionMode.NATIVE_PER_APP) {
-                if (!killSwitch()) backend.restorePerApp()
-            } else backend.stopPerAppSidecar()
-            backend.restoreSystemProxy()
+                if (!killSwitch()) restorePerAppIfSupported()
+            } else stopSidecarIfSupported()
+            restoreSystemProxyIfSupported()
         }.exceptionOrNull()
         backend.stop()
         runCatching { backend.stopGateway() }
@@ -2294,15 +2315,16 @@ class PerRouteController @JvmOverloads constructor(
 
     @Synchronized
     override fun close() {
+        if (closing) return
         closing = true
         desiredConnected = false
         phase = ConnectionPhase.DISCONNECTING
         val closingMode = activeMode ?: state.connectionMode()
         runCatching {
             if (closingMode == ConnectionMode.NATIVE_PER_APP) {
-                if (!killSwitch()) backend.restorePerApp()
-            } else backend.stopPerAppSidecar()
-            backend.restoreSystemProxy()
+                if (!killSwitch()) restorePerAppIfSupported()
+            } else stopSidecarIfSupported()
+            restoreSystemProxyIfSupported()
         }
         activeMode = null
         connectionReady = false

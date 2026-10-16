@@ -72,7 +72,7 @@ final class RealCoreIntegrationTests {
     }
 
     /** One local VLESS server, its redirect target and the process. */
-    private static final class LocalServer implements AutoCloseable {
+    static final class LocalServer implements AutoCloseable {
         final String name;
         final String uuid = UUID.randomUUID().toString();
         final ServerSocket http;
@@ -143,6 +143,7 @@ final class RealCoreIntegrationTests {
 
     /** The real core and gateway; the per-app driver, Windows proxy settings and discovery are left alone. */
     private static final class LoopbackBackend implements ConnectionBackend {
+        @Override public app.perroute.backend.api.BackendCapabilities capabilities() { return app.perroute.backend.api.BackendCapabilities.windows(); }
         final WindowsConnectionBackend real = new WindowsConnectionBackend(AppDirectories.dataDirectory());
         volatile int starts;
         @Override public void installCore(Consumer<String> progress) { throw new UnsupportedOperationException("Not used by loopback tests"); }
