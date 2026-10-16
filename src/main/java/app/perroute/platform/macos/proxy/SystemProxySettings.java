@@ -22,6 +22,8 @@ public interface SystemProxySettings {
          * committed values to the running system. Do not use a read-then-write shell approximation.
          */
         void replace(String serviceId, ProxySettings expected, ProxySettings replacement) throws IOException, InterruptedException;
+        /** Native normalization may remove disabled endpoints; fake/Windows semantics remain exact. */
+        default boolean equivalent(ProxySettings expected, ProxySettings observed) { return expected.equals(observed); }
         @Override void close() throws IOException;
     }
     record State(ProxySettings configured, ProxySettings effective) {

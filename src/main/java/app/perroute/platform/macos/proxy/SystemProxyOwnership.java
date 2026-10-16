@@ -34,7 +34,7 @@ public final class SystemProxyOwnership {
             var snapshots = new LinkedHashMap<String, ProxySettings>();
             for (String id : targets) {
                 var state = session.read(id);
-                if (!state.configured().equals(state.effective())) throw new IOException("Network-service configuration is not settled");
+                if (!session.equivalent(state.configured(), state.effective())) throw new IOException("Network-service configuration is not settled");
                 var proposed = state.configured().replacing(local.values().keySet(), local);
                 var groups = EnumSet.noneOf(Group.class);
                 for (Group group : Group.values()) {
@@ -56,7 +56,7 @@ public final class SystemProxyOwnership {
                     ProxySettings applied = before.replacing(keys(entry.groups()), entry.applied());
                     session.replace(entry.serviceId(), before, applied);
                     var observed = session.read(entry.serviceId());
-                    if (!observed.configured().equals(applied) || !observed.effective().equals(applied))
+                    if (!observed.configured().equals(applied) || !session.equivalent(applied, observed.effective()))
                         throw new IOException("Proxy configuration failed read-back verification");
                 }
             } catch (IOException | InterruptedException error) {
@@ -106,8 +106,8 @@ public final class SystemProxyOwnership {
                     ProxySettings applied = entry.applied().select(group.keys());
                     ProxySettings configured = current.configured().select(group.keys());
                     ProxySettings effective = current.effective().select(group.keys());
-                    if (configured.equals(before) && effective.equals(before)) remaining.remove(group);
-                    else if (known(configured, before, applied) && known(effective, before, applied)) {
+                    if (configured.equals(before) && session.equivalent(before, effective)) remaining.remove(group);
+                    else if (known(configured, before, applied) && (session.equivalent(before, effective) || session.equivalent(applied, effective))) {
                         // Restore endpoint/port/enable as a unit; never construct a mixed external proxy tuple.
                         replacement = replacement.replacing(group.keys(), before);
                         restoring.add(group);
@@ -119,7 +119,7 @@ public final class SystemProxyOwnership {
                         var verified = session.read(entry.serviceId());
                         for (Group group : restoring) {
                             ProxySettings before = entry.before().select(group.keys());
-                            if (verified.configured().select(group.keys()).equals(before) && verified.effective().select(group.keys()).equals(before))
+                            if (verified.configured().select(group.keys()).equals(before) && session.equivalent(before, verified.effective().select(group.keys())))
                                 remaining.remove(group);
                             else issues.add(new Issue(entry.serviceId(), group, Problem.VERIFICATION_FAILED));
                         }

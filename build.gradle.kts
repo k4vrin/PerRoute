@@ -313,3 +313,11 @@ tasks.register<JavaExec>("runMacosProxyProjectionTests") {
     mainClass.set("app.perroute.platform.macos.proxy.EffectiveProxyProjectionTests")
     enableAssertions = true
 }
+
+// Pure read-back/race and normalized ownership fixtures.
+tasks.register<JavaExec>("runMacosProxyReadbackTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.ProxyReadbackTests")
+    enableAssertions = true
+}

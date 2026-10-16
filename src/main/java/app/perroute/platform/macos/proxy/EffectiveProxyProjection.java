@@ -26,16 +26,6 @@ public final class EffectiveProxyProjection {
         }
         @Override public String toString() { return "EffectiveProxyProjection[" + outcome + ", redacted]"; }
     }
-    private static final List<String> PROTOCOLS = List.of("HTTP", "HTTPS", "SOCKS");
-    private static final Set<String> KEYS;
-    static {
-        var keys = new HashSet<>(List.of("ExceptionsList", "ExcludeSimpleHostnames", "FTPPassive",
-                "ProxyAutoConfigEnable", "ProxyAutoDiscoveryEnable"));
-        for (String protocol : PROTOCOLS) {
-            keys.add(protocol + "Enable"); keys.add(protocol + "Proxy"); keys.add(protocol + "Port");
-        }
-        KEYS = Set.copyOf(keys);
-    }
 
     public List<Result> project(NetworkServiceInventory inventory) {
         Objects.requireNonNull(inventory);
@@ -66,7 +56,7 @@ public final class EffectiveProxyProjection {
         var global = inventory.globalProxies().settings().orElseThrow().values();
         // __SERVICES__ is app-layer VPN context, not a stable network-service-ID lookup.
         // Supplemental/domain and unknown context may change selection for a particular request.
-        if (global.keySet().stream().anyMatch(key -> !KEYS.contains(key) && !key.equals("__SCOPED__")))
+        if (global.keySet().stream().anyMatch(key -> !ManualProxySemantics.KEYS.contains(key) && !key.equals("__SCOPED__")))
             return refused(service, Outcome.CONTEXT_UNSUPPORTED);
         Object scopes = global.get("__SCOPED__");
         if (scopes == null) return refused(service, Outcome.SCOPE_MISSING);
@@ -80,8 +70,8 @@ public final class EffectiveProxyProjection {
                 if (!(entry.getKey() instanceof String key)) throw new IllegalArgumentException();
                 values.put(key, entry.getValue());
             }
-            var configured = normalize(service.configured().settings().orElseThrow());
-            var scoped = normalize(new ProxySettings(values));
+            var configured = ManualProxySemantics.normalize(service.configured().settings().orElseThrow());
+            var scoped = ManualProxySemantics.normalize(new ProxySettings(values));
             return new Result(service.id(), configured.equals(scoped) ? Outcome.MATCH : Outcome.DIFFERENT,
                     Optional.of(configured), Optional.of(scoped));
         } catch (IllegalArgumentException | ArithmeticException unsupported) { return refused(service, Outcome.SETTINGS_UNSUPPORTED); }
@@ -91,40 +81,5 @@ public final class EffectiveProxyProjection {
         return new Result(service.id(), outcome, Optional.empty(), Optional.empty());
     }
 
-    private static ProxySettings normalize(ProxySettings settings) {
-        var source = settings.values();
-        if (!KEYS.containsAll(source.keySet())) throw new IllegalArgumentException();
-        var result = new LinkedHashMap<String, Object>();
-        for (String protocol : PROTOCOLS) {
-            int enabled = flag(source, protocol + "Enable");
-            result.put(protocol + "Enable", enabled);
-            // Apple's normalized aggregate removes dormant endpoints. The original dictionary is untouched.
-            if (enabled == 0) continue;
-            Object host = source.get(protocol + "Proxy");
-            Object port = source.get(protocol + "Port");
-            if (!(host instanceof String text) || text.isBlank() || !(port instanceof BigDecimal number))
-                throw new IllegalArgumentException();
-            int value = number.intValueExact();
-            // Do not infer getservbyname-dependent defaults for absent/zero ports.
-            if (value < 1 || value > 65535) throw new IllegalArgumentException();
-            result.put(protocol + "Proxy", text); result.put(protocol + "Port", value);
-        }
-        // PAC/WPAD execution, authentication references, legacy and unknown keys are outside this schema.
-        if (flag(source, "ProxyAutoConfigEnable") != 0 || flag(source, "ProxyAutoDiscoveryEnable") != 0)
-            throw new IllegalArgumentException();
-        result.put("ExcludeSimpleHostnames", flag(source, "ExcludeSimpleHostnames"));
-        Object exceptions = source.getOrDefault("ExceptionsList", List.of());
-        if (!(exceptions instanceof List<?> list) || list.stream().anyMatch(value -> !(value instanceof String text) || text.isBlank()))
-            throw new IllegalArgumentException();
-        result.put("ExceptionsList", exceptions);
-        if (source.containsKey("FTPPassive")) result.put("FTPPassive", flag(source, "FTPPassive"));
-        return new ProxySettings(result);
-    }
-    private static int flag(Map<String, Object> values, String key) {
-        Object value = values.get(key);
-        if (value == null) return 0;
-        if (!(value instanceof BigDecimal number) || !(number.equals(BigDecimal.ZERO) || number.equals(BigDecimal.ONE)))
-            throw new IllegalArgumentException();
-        return number.intValueExact();
-    }
+
 }
