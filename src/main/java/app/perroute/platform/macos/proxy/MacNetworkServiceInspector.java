@@ -67,10 +67,12 @@ public final class MacNetworkServiceInspector {
                 } finally { release(protocol); release(proxyType); }
                 var setup = dynamic(store, "Setup:/Network/Service/" + id + "/Proxies", sc);
                 var state = dynamic(store, "State:/Network/Service/" + id + "/Proxies", sc);
-                boolean activeIp = hasState(store, "State:/Network/Service/" + id + "/IPv4", sc)
-                        || hasState(store, "State:/Network/Service/" + id + "/IPv6", sc);
+                var activeInterfaces = new ArrayList<String>();
+                activeInterface(store, "State:/Network/Service/" + id + "/IPv4", sc).ifPresent(activeInterfaces::add);
+                activeInterface(store, "State:/Network/Service/" + id + "/IPv6", sc).ifPresent(activeInterfaces::add);
                 result.add(new Service(id, codec.string(sc.SCNetworkServiceGetName(service)), interfaces(sc.SCNetworkServiceGetInterface(service), sc),
-                        sc.SCNetworkServiceGetEnabled(service) != 0, current.contains(id), activeIp, protocolEnabled, configured, setup, state));
+                        sc.SCNetworkServiceGetEnabled(service) != 0, current.contains(id), !activeInterfaces.isEmpty(), protocolEnabled,
+                        configured, setup, state, activeInterfaces.stream().distinct().toList()));
             }
             Pointer global = sc.SCDynamicStoreCopyProxies(store);
             Observation aggregate;
@@ -119,16 +121,19 @@ public final class MacNetworkServiceInspector {
             return value == null ? missing(sc.SCError()) : observation(value);
         } finally { release(value); release(text); }
     }
-    private static boolean hasState(Pointer store, String key, SystemConfiguration sc) throws IOException {
+    private static Optional<String> activeInterface(Pointer store, String key, SystemConfiguration sc) throws IOException {
         Pointer text = text(key), value = null;
         try {
             value = sc.SCDynamicStoreCopyValue(store, text);
             if (value == null && sc.SCError() != 1004 && sc.SCError() != 0) throw new IOException("Could not inspect active service state");
-            if (value == null) return false;
-            // IP state may contain binary metadata. Only Addresses determines this activity hint.
+            if (value == null) return Optional.empty();
+            // Read only these fields: unrelated IP-state metadata can contain opaque CFData.
             Object addresses = new NativePropertyLists().dictionaryField(value, "Addresses");
-            return addresses instanceof List<?> list && !list.isEmpty()
-                    && list.stream().allMatch(address -> address instanceof String string && !string.isBlank());
+            if (!(addresses instanceof List<?> list) || list.isEmpty()
+                    || !list.stream().allMatch(address -> address instanceof String string && !string.isBlank())) return Optional.empty();
+            Object networkInterface = new NativePropertyLists().dictionaryField(value, "InterfaceName");
+            // Empty records activity without inventing an interface association for projection.
+            return Optional.of(networkInterface instanceof String name ? name : "");
         } finally { release(value); release(text); }
     }
     private static Observation observation(Pointer value) {

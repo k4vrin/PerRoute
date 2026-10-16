@@ -305,3 +305,11 @@ tasks.register<JavaExec>("runMacosNativeNetworkServiceTests") {
     mainClass.set("app.perroute.platform.macos.proxy.NativeNetworkServiceTests")
     enableAssertions = true
 }
+
+// Pure projection fixtures. No native settings writer or traffic is involved.
+tasks.register<JavaExec>("runMacosProxyProjectionTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.EffectiveProxyProjectionTests")
+    enableAssertions = true
+}

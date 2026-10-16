@@ -27,12 +27,20 @@ public record NetworkServiceInventory(List<Service> services, Observation global
     }
     public record Service(String id, String name, List<InterfaceLayer> interfaces, boolean enabled,
                           boolean currentSet, boolean activeIp, boolean proxyProtocolEnabled,
-                          Observation configured, Observation publishedSetup, Observation runtimeState) {
+                          Observation configured, Observation publishedSetup, Observation runtimeState,
+                          List<String> activeInterfaces) {
         public Service {
             if (id == null || id.isBlank()) throw new IllegalArgumentException("Stable service ID required");
             Objects.requireNonNull(name);
             interfaces = List.copyOf(interfaces);
+            activeInterfaces = List.copyOf(activeInterfaces);
             Objects.requireNonNull(configured); Objects.requireNonNull(publishedSetup); Objects.requireNonNull(runtimeState);
+        }
+        public Service(String id, String name, List<InterfaceLayer> interfaces, boolean enabled,
+                       boolean currentSet, boolean activeIp, boolean proxyProtocolEnabled,
+                       Observation configured, Observation publishedSetup, Observation runtimeState) {
+            this(id, name, interfaces, enabled, currentSet, activeIp, proxyProtocolEnabled,
+                    configured, publishedSetup, runtimeState, List.of());
         }
         /** A conservative inspection candidate, never permission to mutate or proof of physical hardware. */
         public Scope scope() {

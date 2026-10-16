@@ -28,9 +28,14 @@ public final class NativeNetworkServiceTests {
         long candidates = first.services().stream().filter(service -> service.scope() == Scope.CANDIDATE).count();
         long runtime = first.services().stream().filter(service -> service.runtimeState().status() == Status.PRESENT).count();
         long configured = first.services().stream().filter(service -> service.configured().status() == Status.PRESENT).count();
+        var projections = new EffectiveProxyProjection().project(first);
+        check(projections.size() == first.services().size(), "Every native service has an explicit projection outcome");
+        check(projections.stream().allMatch(result -> result.configured().isPresent() == result.scoped().isPresent()), "Host projections preserve comparison invariants");
+        var outcomes = new EnumMap<EffectiveProxyProjection.Outcome, Long>(EffectiveProxyProjection.Outcome.class);
+        projections.forEach(result -> outcomes.merge(result.outcome(), 1L, Long::sum));
         System.out.println("Native network service checks passed (" + assertions + " assertions); services=" + first.services().size()
                 + ", candidates=" + candidates + ", configured=" + configured + ", runtimeEntries=" + runtime
-                + ", global=" + first.globalProxies().status() + ", preferences=" + first.preferences());
+                + ", global=" + first.globalProxies().status() + ", preferences=" + first.preferences() + ", projections=" + outcomes);
     }
     private static void nativeValues() throws Exception {
         var value = decode("""
@@ -44,8 +49,19 @@ public final class NativeNetworkServiceTests {
         check(value.values().get("nested").equals(Map.of("unicode", "شبکه 😀")), "Native Unicode and nested dictionaries preserved");
         check(value.values().get("ExceptionsList").equals(List.of("*.example", "localhost")), "Native array order preserved");
         check(decode("<dict/>").values().isEmpty(), "Empty native dictionary is present, not absent");
-        String ipState = "<dict><key>metadata</key><data>AQID</data><key>Addresses</key><array><string>127.0.0.1</string></array></dict>";
+        var scopedFixture = decode("""
+                <dict><key>__SCOPED__</key><dict><key>en0</key><dict>
+                <key>HTTPEnable</key><integer>1</integer><key>HTTPProxy</key><string>127.0.0.1</string>
+                <key>HTTPPort</key><integer>18080</integer></dict></dict></dict>
+                """);
+        var manual = Observation.present(new ProxySettings(Map.of("HTTPEnable", 1, "HTTPProxy", "127.0.0.1", "HTTPPort", 18080)));
+        var service = new Service("fixture", "private", List.of(new InterfaceLayer("Ethernet", "en0")), true, true, true, true,
+                manual, manual, Observation.unavailable(Status.ABSENT), List.of("en0"));
+        var projection = new EffectiveProxyProjection().project(new NetworkServiceInventory(List.of(service), Observation.present(scopedFixture), Consistency.UNCHANGED));
+        check(projection.getFirst().outcome() == EffectiveProxyProjection.Outcome.MATCH, "Native scoped dictionary feeds the same pure projection");
+        String ipState = "<dict><key>metadata</key><data>AQID</data><key>InterfaceName</key><string>en0</string><key>Addresses</key><array><string>127.0.0.1</string></array></dict>";
         check(decodeField(ipState, "Addresses").equals(List.of("127.0.0.1")), "IP activity reads only the requested field despite opaque metadata");
+        check(decodeField(ipState, "InterfaceName").equals("en0"), "Native IP interface provenance reads independently of opaque metadata");
         check(decodeField(ipState, "Missing") == null, "Missing native field stays absent");
         try { decodeField(ipState, "metadata"); throw new AssertionError("Opaque selected field accepted"); }
         catch (IOException expected) { check(true, "Opaque selected field is refused"); }
