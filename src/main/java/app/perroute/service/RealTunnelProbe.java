@@ -53,12 +53,12 @@ public final class RealTunnelProbe {
         Path config = AppDirectories.dataDirectory().resolve("probes").resolve("probe-" + UUID.randomUUID() + ".json");
         Process process = null;
         try {
-            Path executable = AppDirectories.coreDirectory().resolve("xray.exe");
-            if (!Files.isRegularFile(executable)) throw new IOException("Xray is not installed");
+            XrayRuntime runtime = XrayRuntime.current();
+            Path executable = runtime.requireExecutable(false);
             Files.createDirectories(config.getParent());
             Files.writeString(config, generator.generateProbe(node, socksPort, apiPort), StandardCharsets.UTF_8);
             process = new ProcessBuilder(executable.toString(), "run", "-config", config.toString())
-                    .directory(AppDirectories.coreDirectory().toFile()).redirectErrorStream(true).start();
+                    .directory(runtime.directory().toFile()).redirectErrorStream(true).start();
             Process running = process;
             Thread.ofVirtual().start(() -> {
                 try { running.getInputStream().transferTo(java.io.OutputStream.nullOutputStream()); }

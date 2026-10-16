@@ -16,7 +16,18 @@ import java.util.function.Consumer;
 public final class XrayProcessManager implements AutoCloseable {
     private final List<Consumer<String>> logListeners = new CopyOnWriteArrayList<>();
     private final List<Consumer<Boolean>> stateListeners = new CopyOnWriteArrayList<>();
+    private final XrayRuntime runtime;
+    private final Path dataDirectory;
     private volatile Process process;
+
+    public XrayProcessManager() {
+        this(XrayRuntime.current(), AppDirectories.dataDirectory());
+    }
+
+    public XrayProcessManager(XrayRuntime runtime, Path dataDirectory) {
+        this.runtime = java.util.Objects.requireNonNull(runtime, "runtime");
+        this.dataDirectory = java.util.Objects.requireNonNull(dataDirectory, "dataDirectory").toAbsolutePath().normalize();
+    }
 
     public void addLogListener(Consumer<String> listener) { logListeners.add(listener); }
     public void addStateListener(Consumer<Boolean> listener) { stateListeners.add(listener); }
@@ -28,15 +39,9 @@ public final class XrayProcessManager implements AutoCloseable {
 
     public synchronized void start(String config, boolean requiresWintun) throws IOException, InterruptedException {
         if (isRunning()) return;
-        Path coreDir = AppDirectories.coreDirectory();
-        Path executable = coreDir.resolve("xray.exe");
-        Path wintun = coreDir.resolve("wintun.dll");
-        if (!Files.isRegularFile(executable) || (requiresWintun && !Files.isRegularFile(wintun))) {
-            throw new IOException(requiresWintun
-                    ? "Xray/Wintun is not installed. Use the Install core button first."
-                    : "Xray is not installed. Use the Install core button first.");
-        }
-        Path data = AppDirectories.dataDirectory();
+        Path coreDir = runtime.directory();
+        Path executable = runtime.requireExecutable(requiresWintun);
+        Path data = dataDirectory;
         Files.createDirectories(data);
         Path configPath = data.resolve("current-config.json");
         Files.writeString(configPath, config, StandardCharsets.UTF_8);
@@ -64,14 +69,9 @@ public final class XrayProcessManager implements AutoCloseable {
      * rejected config can never interrupt the current connection.
      */
     public void validate(String config, boolean requiresWintun) throws IOException, InterruptedException {
-        Path coreDir = AppDirectories.coreDirectory();
-        Path executable = coreDir.resolve("xray.exe");
-        if (!Files.isRegularFile(executable) || (requiresWintun && !Files.isRegularFile(coreDir.resolve("wintun.dll")))) {
-            throw new IOException(requiresWintun
-                    ? "Xray/Wintun is not installed. Use the Install core button first."
-                    : "Xray is not installed. Use the Install core button first.");
-        }
-        Path data = AppDirectories.dataDirectory();
+        Path coreDir = runtime.directory();
+        Path executable = runtime.requireExecutable(requiresWintun);
+        Path data = dataDirectory;
         Files.createDirectories(data);
         Path pending = data.resolve("pending-config.json");
         try {
@@ -135,7 +135,7 @@ public final class XrayProcessManager implements AutoCloseable {
     public synchronized void applyRuntimeChange(String outbounds, String routing, String newTag, String oldTag, String config)
             throws IOException, InterruptedException {
         if (!isRunning()) throw new IOException("The connection core is not running");
-        Path data = AppDirectories.dataDirectory();
+        Path data = dataDirectory;
         Files.createDirectories(data);
         // These files hold server credentials, exactly like current-config.json, and are removed right away.
         Path outboundFile = data.resolve("runtime-outbound.json");
@@ -160,8 +160,8 @@ public final class XrayProcessManager implements AutoCloseable {
     }
 
     private String api(String command, String argument) throws IOException, InterruptedException {
-        Path coreDir = AppDirectories.coreDirectory();
-        Process process = new ProcessBuilder(coreDir.resolve("xray.exe").toString(), "api", command,
+        Path coreDir = runtime.directory();
+        Process process = new ProcessBuilder(runtime.requireExecutable(false).toString(), "api", command,
                 "--server=127.0.0.1:" + XrayConfigGenerator.STATS_API_PORT, argument)
                 .directory(coreDir.toFile()).redirectErrorStream(true).start();
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -179,7 +179,10 @@ public final class XrayProcessManager implements AutoCloseable {
     }
 
     public void stopOrphan() {
-        String executable = AppDirectories.coreDirectory().resolve("xray.exe").toString();
+        if (runtime.target() != XrayRuntime.Target.WINDOWS_X64) {
+            throw new UnsupportedOperationException("macOS orphan recovery is not implemented");
+        }
+        String executable = runtime.executable().toString();
         java.util.Set<Long> own = ProcessHandle.current().descendants()
                 .map(ProcessHandle::pid).collect(java.util.stream.Collectors.toSet());
         ProcessHandle.allProcesses()

@@ -86,6 +86,20 @@ tasks.matching { it.name in setOf("createDistributable", "packageExe") }.configu
     inputs.dir(layout.buildDirectory.dir("native-resources"))
 }
 
+tasks.matching { it.name == "createDistributable" }.configureEach {
+    doLast {
+        if (System.getProperty("os.name") == "Mac OS X") {
+            // Compose 1.8.2 copies app resources without preserving Unix execute bits.
+            // Restore Darwin engine permissions in the local image before it is packaged for delivery.
+            val resources = layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app/Contents/app/resources/xray").get().asFile
+            for (folder in listOf("macos-arm64", "macos-x64")) {
+                val engine = resources.resolve("$folder/xray")
+                if (engine.isFile) check(engine.setExecutable(true, false)) { "Cannot make packaged Xray executable: $engine" }
+            }
+        }
+    }
+}
+
 tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
     options.release.set(21)
@@ -210,4 +224,21 @@ tasks.register<Exec>("inspectMacosExtensionSpikeApp") {
         evidence.writeText(output.toString(Charsets.UTF_8))
         println("Compose container bridge inspection passed: ${snapshot["bundleIdentifier"]}")
     }
+}
+
+tasks.register<JavaExec>("runXrayRuntimeTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.XrayRuntimeTests")
+    enableAssertions = true
+}
+
+// Explicit local-only traffic test with a developer-supplied official Darwin engine.
+tasks.register<JavaExec>("runMacosEngineSmoke") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.MacosEngineSmokeTests")
+    systemProperty("perroute.portOffset", "20000")
+    args(layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
+    enableAssertions = true
 }
