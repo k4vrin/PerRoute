@@ -41,7 +41,7 @@ public final class MacosEngineSmokeTests {
             Thread server = Thread.ofVirtual().start(() -> serve(origin));
             process.validate(config, false);
             check(!process.isRunning(), "Validation must not start the core");
-            check(!Files.exists(data.resolve("pending-config.json")), "Validation file must be removed");
+            check(noPendingConfig(data), "Validation file must be removed");
             process.start(config, false);
             waitForPort(process, socks);
             waitForPort(process, http);
@@ -55,7 +55,7 @@ public final class MacosEngineSmokeTests {
                 throw new AssertionError("Invalid configuration was accepted");
             } catch (IOException expected) {
                 check(process.isRunning(), "Rejected validation preserves the active engine");
-                check(!Files.exists(data.resolve("pending-config.json")), "Rejected validation is cleaned up");
+                check(noPendingConfig(data), "Rejected validation is cleaned up");
             }
             String outbound = "{\"outbounds\":[{\"tag\":\"replacement\",\"protocol\":\"freedom\",\"settings\":{}}]}";
             String routing = "{\"routing\":{\"rules\":[{\"type\":\"field\",\"inboundTag\":[\"perroute-api\"],\"outboundTag\":\"api\",\"ruleTag\":\"api-route\"},"
@@ -137,6 +137,12 @@ public final class MacosEngineSmokeTests {
             } catch (IOException pending) { Thread.sleep(25); }
         }
         throw new AssertionError("Engine listener did not become ready");
+    }
+
+    private static boolean noPendingConfig(Path data) throws IOException {
+        try (var files = Files.list(data)) {
+            return files.noneMatch(path -> path.getFileName().toString().startsWith("pending-config-"));
+        }
     }
 
     private static int freePort() throws IOException {

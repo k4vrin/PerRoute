@@ -1977,7 +1977,12 @@ class PerRouteController @JvmOverloads constructor(
             phase = ConnectionPhase.DISCONNECTED
             stopTelemetry()
             stateListeners.forEach { it(false) }
-            ActionResult(false, message(e))
+            if (e is InterruptedException || Thread.currentThread().isInterrupted) {
+                desiredConnected = false
+                markSession(false)
+                Thread.currentThread().interrupt()
+                ActionResult(false, "Connection cancelled.")
+            } else ActionResult(false, message(e))
         }
     }
 
@@ -2009,6 +2014,10 @@ class PerRouteController @JvmOverloads constructor(
             prepared = prepare(target, mode, apps, choices)
             validate(prepared)
         } catch (invalid: Throwable) {
+            if (invalid is InterruptedException || Thread.currentThread().isInterrupted) {
+                Thread.currentThread().interrupt()
+                return ActionResult(false, "Server switch cancelled; the current connection was left untouched.")
+            }
             return ActionResult(false, "Could not switch servers; the current connection was left untouched: ${message(invalid)}")
         }
         // In place first: only the main route's outbound is replaced, so custom and Auto routes keep their
@@ -2027,7 +2036,12 @@ class PerRouteController @JvmOverloads constructor(
             log("Switched to ${cleanName(target.name())}. Custom and Auto routes kept running.")
             return ActionResult(true, "Switched to ${cleanName(target.name())}.")
         }
-        inPlace.exceptionOrNull()?.let { log("The main server could not be replaced in place (${message(it)}); restarting the core.") }
+        val inPlaceError = inPlace.exceptionOrNull()
+        if (inPlaceError is InterruptedException || Thread.currentThread().isInterrupted) {
+            Thread.currentThread().interrupt()
+            return ActionResult(false, "Server switch cancelled; check the current connection before retrying.")
+        }
+        inPlaceError?.let { log("The main server could not be replaced in place (${message(it)}); restarting the core.") }
         phase = ConnectionPhase.CONNECTING
         connectionReady = false
         state.setSelectedNodeKey(key)
@@ -2045,21 +2059,27 @@ class PerRouteController @JvmOverloads constructor(
             log("Switched to ${cleanName(target.name())}.")
             ActionResult(true, "Switched to ${cleanName(target.name())}.")
         } catch (switchError: Throwable) {
+            // Rollback owns a bounded cleanup attempt even when the caller cancelled the new connection.
+            val interrupted = switchError is InterruptedException || Thread.currentThread().isInterrupted
+            if (interrupted) Thread.interrupted()
             state.setSelectedNodeKey(previous.key())
             save()
-            val restored = runCatching {
+            val restoration = runCatching {
                 backend.stop()
                 backend.start(fallback.config, fallback.tun)
                 Thread.sleep(250)
                 check(backend.isRunning()) { "Previous server could not be restored." }
-            }.isSuccess
-            if (restored) {
+            }
+            val cancelled = interrupted || restoration.exceptionOrNull() is InterruptedException || Thread.currentThread().isInterrupted
+            if (restoration.isSuccess) {
                 activeMode = mode
                 connectionReady = true
                 phase = ConnectionPhase.CONNECTED
                 activate(fallback)
                 stateListeners.forEach { it(true) }
-                ActionResult(false, "Could not switch servers; the previous connection was restored: ${message(switchError)}")
+                if (cancelled) Thread.currentThread().interrupt()
+                ActionResult(false, if (cancelled) "Server switch cancelled; the previous connection was restored."
+                    else "Could not switch servers; the previous connection was restored: ${message(switchError)}")
             } else {
                 if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) runCatching { restorePerAppIfSupported() }
                 if (mode == ConnectionMode.SYSTEM_PROXY) runCatching { restoreSystemProxyIfSupported() }
@@ -2070,6 +2090,11 @@ class PerRouteController @JvmOverloads constructor(
                 phase = ConnectionPhase.DISCONNECTED
                 stopTelemetry()
                 stateListeners.forEach { it(false) }
+                if (cancelled) {
+                    desiredConnected = false
+                    markSession(false)
+                    Thread.currentThread().interrupt()
+                }
                 ActionResult(false, "Server switch failed and the connection was stopped: ${message(switchError)}")
             }
         }

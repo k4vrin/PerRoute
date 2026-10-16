@@ -265,3 +265,20 @@ tasks.register<JavaExec>("runMacosNativeKeychainTests") {
     mainClass.set("app.perroute.platform.macos.MacNativeKeychainTests")
     enableAssertions = true
 }
+
+tasks.register<JavaExec>("runXrayFailureTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.service.XrayFailureTests")
+    args(layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
+    enableAssertions = true
+}
+
+tasks.register<JavaExec>("runMacosFailureTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.MacosFailureTests")
+    args(layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
+    systemProperty("perroute.portOffset", "20000")
+    enableAssertions = true
+}

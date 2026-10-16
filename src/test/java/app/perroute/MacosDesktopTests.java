@@ -27,12 +27,12 @@ public final class MacosDesktopTests {
         Path root = Path.of(args[0]);
         capabilityGuards();
         realLocalLifecycle(root);
-        check(attempted.isEmpty(), "Controller must not call unavailable backend operations: " + attempted);
+        assertIsolated();
         System.out.println("macOS desktop checks passed (" + assertions + " assertions)");
         System.exit(0);
     }
 
-    private static MemoryPreferences preferences() {
+    static MemoryPreferences preferences() {
         var p = new MemoryPreferences();
         p.putBoolean("v3.initialized", true);
         for (String key : List.of("v3.qualityBackground", "v3.routeMonitoring", "v3.trafficGateway", "autoReconnect", "autoFailover", "autoSpeedTest")) p.putBoolean(key, false);
@@ -40,7 +40,7 @@ public final class MacosDesktopTests {
     }
 
     /** Make any accidental platform mutation observable even if the controller catches its exception. */
-    private static ConnectionBackend isolated(ConnectionBackend delegate) {
+    static ConnectionBackend isolated(ConnectionBackend delegate) {
         return (ConnectionBackend) java.lang.reflect.Proxy.newProxyInstance(ConnectionBackend.class.getClassLoader(), new Class<?>[]{ConnectionBackend.class}, (proxy, method, args) -> {
             String name = method.getName();
             if (FORBIDDEN.contains(name)) {
@@ -132,7 +132,7 @@ public final class MacosDesktopTests {
     private static ProxyNode node(String key, int port) {
         return new ProxyNode(key, key, Protocol.VLESS, "127.0.0.1", port, UUID.randomUUID().toString(), Map.of("security", "none"), "");
     }
-    private static String request() throws Exception {
+    static String request() throws Exception {
         try (Socket socket = new Socket(new java.net.Proxy(java.net.Proxy.Type.SOCKS, new InetSocketAddress("127.0.0.1", AppProxyLauncher.SOCKS_PORT)))) {
             // Both controlled VLESS servers redirect this destination to their local HTTP origins.
             socket.connect(new InetSocketAddress("1.1.1.1", 80), 3_000);
@@ -152,6 +152,9 @@ public final class MacosDesktopTests {
                     .mapToInt(line -> Integer.parseInt(line.substring(15).trim())).findFirst().orElseThrow();
             return new String(input.readNBytes(length), StandardCharsets.US_ASCII);
         }
+    }
+    static void assertIsolated() {
+        check(attempted.isEmpty(), "Controller must not call unavailable backend operations: " + attempted);
     }
     private static void check(boolean value, String message) {
         assertions++;
