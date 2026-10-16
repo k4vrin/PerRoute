@@ -62,6 +62,7 @@ compose.desktop {
             vendor = "PerRoute"
             macOS {
                 bundleID = "app.perroute.spike"
+                minimumSystemVersion = "13.0"
                 iconFile.set(project.file("src/main/resources/icons/perroute.icns"))
             }
             windows {
@@ -467,4 +468,15 @@ tasks.register<JavaExec>("runMacosApplicationCatalogTests") {
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("app.perroute.MacosApplicationCatalogTests")
     enableAssertions = true
+}
+
+tasks.register<Exec>("runMacosPreviewPackagingTests") {
+    commandLine("python3", "scripts/test_macos_preview.py")
+}
+tasks.register<Exec>("packageMacosPreview") {
+    dependsOn(tasks.named("createDistributable"), tasks.named("runMacosPreviewPackagingTests"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine("python3", "scripts/macos_preview.py", "--app",
+        layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app").get().asFile.absolutePath,
+        "--output", layout.buildDirectory.dir("macos-preview").get().asFile.absolutePath)
 }
