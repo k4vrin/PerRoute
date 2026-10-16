@@ -296,7 +296,14 @@ class PerRouteController @JvmOverloads constructor(
                 }
                 if (stoppedMode == ConnectionMode.SYSTEM_PROXY) {
                     Thread.ofVirtual().name("perroute-system-proxy-cleanup").start {
-                        runCatching { restoreSystemProxyIfSupported() }
+                        synchronized(this@PerRouteController) {
+                            // A later Connect performs its own stale recovery before starting the core.
+                            // Delayed exit cleanup must not restore a newly established connection's lease.
+                            if (!closing && phase == ConnectionPhase.DISCONNECTED && !backend.isRunning()) {
+                                runCatching { restoreSystemProxyIfSupported() }
+                                    .onFailure { log("System proxy recovery is pending: ${message(it)}") }
+                            }
+                        }
                     }
                 }
                 log("The connection core stopped.")
@@ -314,12 +321,16 @@ class PerRouteController @JvmOverloads constructor(
         startQualityMeasurements()
         recoverFromUnexpectedExit()
         Runtime.getRuntime().addShutdownHook(Thread({
-            if (!closing) {
-                runCatching { backend.stopGateway() }
-                runCatching { backend.stop() }
-                runCatching { restoreSystemProxyIfSupported() }
-                runCatching { if (!killSwitch()) stopSidecarIfSupported() }
-                runCatching { Files.deleteIfExists(sessionMarker) }
+            synchronized(this@PerRouteController) {
+                if (!closing) {
+                    runCatching { backend.stopGateway() }
+                    if (capabilities().perApp()) runCatching { backend.stop() }
+                    runCatching { restoreSystemProxyIfSupported() }
+                        .onFailure { log("Shutdown proxy recovery is pending: ${message(it)}") }
+                    if (!capabilities().perApp()) runCatching { backend.stop() }
+                    runCatching { if (!killSwitch()) stopSidecarIfSupported() }
+                    runCatching { Files.deleteIfExists(sessionMarker) }
+                }
             }
         }, "perroute-shutdown"))
     }
@@ -1939,6 +1950,9 @@ class PerRouteController @JvmOverloads constructor(
             if (mode == ConnectionMode.NATIVE_PER_APP && killSwitch()) {
                 backend.applyPerApp(apps)
             }
+            // macOS must resolve an earlier lease before a new Connect, including Local proxy.
+            // Server switches retain the current lease because both cores use the same loopback ports.
+            if (capabilities().supports(ConnectionMode.SYSTEM_PROXY) && !capabilities().perApp()) restoreSystemProxyIfSupported()
             backend.stopGateway()
             backend.stop()
             backend.start(prepared.config, tun)
@@ -1969,7 +1983,9 @@ class PerRouteController @JvmOverloads constructor(
             else "Connected.")
         } catch (e: Throwable) {
             if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) runCatching { restorePerAppIfSupported() }
-            if (mode == ConnectionMode.SYSTEM_PROXY) runCatching { restoreSystemProxyIfSupported() }
+            val proxyCleanupError = if (mode == ConnectionMode.SYSTEM_PROXY)
+                runCatching { restoreSystemProxyIfSupported() }.exceptionOrNull() else null
+            val cleanupDetail = if (proxyCleanupError == null) "" else " System proxy recovery is pending: ${message(proxyCleanupError)}"
             runCatching { backend.stopGateway() }
             backend.stop()
             activeMode = null
@@ -1981,8 +1997,8 @@ class PerRouteController @JvmOverloads constructor(
                 desiredConnected = false
                 markSession(false)
                 Thread.currentThread().interrupt()
-                ActionResult(false, "Connection cancelled.")
-            } else ActionResult(false, message(e))
+                ActionResult(false, "Connection cancelled.$cleanupDetail")
+            } else ActionResult(false, message(e) + cleanupDetail)
         }
     }
 
@@ -2082,7 +2098,9 @@ class PerRouteController @JvmOverloads constructor(
                     else "Could not switch servers; the previous connection was restored: ${message(switchError)}")
             } else {
                 if (mode == ConnectionMode.NATIVE_PER_APP && !killSwitch()) runCatching { restorePerAppIfSupported() }
-                if (mode == ConnectionMode.SYSTEM_PROXY) runCatching { restoreSystemProxyIfSupported() }
+                val proxyCleanupError = if (mode == ConnectionMode.SYSTEM_PROXY)
+                    runCatching { restoreSystemProxyIfSupported() }.exceptionOrNull() else null
+                val cleanupDetail = if (proxyCleanupError == null) "" else " System proxy recovery is pending: ${message(proxyCleanupError)}"
                 runCatching { backend.stopGateway() }
                 backend.stop()
                 activeMode = null
@@ -2095,7 +2113,7 @@ class PerRouteController @JvmOverloads constructor(
                     markSession(false)
                     Thread.currentThread().interrupt()
                 }
-                ActionResult(false, "Server switch failed and the connection was stopped: ${message(switchError)}")
+                ActionResult(false, "Server switch failed and the connection was stopped: ${message(switchError)}$cleanupDetail")
             }
         }
     }
@@ -2104,7 +2122,9 @@ class PerRouteController @JvmOverloads constructor(
     fun disconnect(): ActionResult {
         desiredConnected = false
         if (phase == ConnectionPhase.DISCONNECTED && !backend.isRunning()) {
-            return ActionResult(true, "Already disconnected.")
+            val recoveryError = runCatching { restoreSystemProxyIfSupported() }.exceptionOrNull()
+            return if (recoveryError == null) ActionResult(true, "Already disconnected.")
+            else ActionResult(false, "System proxy recovery is pending: ${message(recoveryError)}")
         }
         phase = ConnectionPhase.DISCONNECTING
         val disconnectMode = activeMode ?: state.connectionMode()
@@ -2350,7 +2370,7 @@ class PerRouteController @JvmOverloads constructor(
                 if (!killSwitch()) restorePerAppIfSupported()
             } else stopSidecarIfSupported()
             restoreSystemProxyIfSupported()
-        }
+        }.onFailure { log("Shutdown cleanup was incomplete: ${message(it)}") }
         activeMode = null
         connectionReady = false
         stopTelemetry()

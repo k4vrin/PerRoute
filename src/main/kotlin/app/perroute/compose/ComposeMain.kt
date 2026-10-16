@@ -422,7 +422,7 @@ fun main(args: Array<String>) {
         return
     }
     val storage = if (macPreview) try {
-        app.perroute.platform.macos.MacStateSession.openDefault()
+        app.perroute.platform.macos.MacStateSession.openDefault(!GraphicsEnvironment.isHeadless())
     } catch (error: Exception) {
         val detail = "PerRoute could not open secure macOS settings: ${error.message}"
         System.err.println(detail)
@@ -438,7 +438,8 @@ fun main(args: Array<String>) {
 
 private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos.MacPreviewSession?, storage: app.perroute.platform.macos.MacStateSession?) {
     val platform = try {
-        if (preview != null) PlatformBootstrap.forOs(System.getProperty("os.name"), preview.directory())
+        if (preview != null && storage != null) PlatformBootstrap.forMac(preview.directory(), storage.systemProxy())
+        else if (preview != null) PlatformBootstrap.forOs(System.getProperty("os.name"), preview.directory())
         else PlatformBootstrap.create()
     } catch (error: UnsupportedOperationException) {
         System.err.println(error.message)

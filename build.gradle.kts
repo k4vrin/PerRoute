@@ -330,3 +330,26 @@ tasks.register<JavaExec>("runMacosNativeProxyWriterTests") {
     enableAssertions = true
 }
 
+// Lifecycle policy uses fake settings; controller fixtures use owned loopback engines only.
+tasks.register<JavaExec>("runMacosSystemProxyServiceTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.SystemProxyServiceTests")
+    enableAssertions = true
+}
+tasks.register<JavaExec>("runMacosSystemProxyLifecycleTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.MacosSystemProxyLifecycleTests")
+    args(layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
+    enableAssertions = true
+}
+// Read-only observer for a separately authorized GUI Connect/Disconnect acceptance session.
+tasks.register<JavaExec>("runMacosProxyAcceptance") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.proxy.NativeProxyAcceptance")
+    args(providers.gradleProperty("proxySnapshotMode").getOrElse("verify"),
+        providers.gradleProperty("proxySnapshotFile").getOrElse("/tmp/perroute-proxy-acceptance.json"))
+    enableAssertions = true
+}

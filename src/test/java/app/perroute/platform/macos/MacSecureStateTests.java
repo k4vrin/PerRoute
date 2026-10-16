@@ -15,6 +15,7 @@ public final class MacSecureStateTests {
         try {
             roundTrip(root.resolve("roundtrip"));
             failures(root.resolve("failures"));
+            recoveryKeyGuard(root.resolve("recovery"));
             keyRace(root.resolve("race"));
             symlinks(root.resolve("links"));
             failedSave(root.resolve("save-failure"));
@@ -90,6 +91,16 @@ public final class MacSecureStateTests {
         Path fresh = root.resolve("unavailable");
         expectFailure(() -> MacStateSession.open(fresh, unavailable), "Unavailable Keychain cannot fall back on first run");
         check(!Files.exists(fresh.resolve("state.bin")) && !Files.exists(fresh.resolve("preferences.bin")), "No encrypted or plaintext data appears on unavailable first run");
+    }
+    static void recoveryKeyGuard(Path root) throws Exception {
+        Files.createDirectories(root);
+        Path journal = root.resolve("proxy-recovery.bin");
+        byte[] evidence = new byte[]{1, 2, 3};
+        Files.write(journal, evidence);
+        var keys = new FakeKeychain();
+        expectFailure(() -> MacStateSession.open(root, keys), "Recovery-only directory cannot replace its lost Keychain key");
+        check(keys.adds == 0, "Recovery journal prevents creating a replacement key");
+        check(Arrays.equals(evidence, Files.readAllBytes(journal)), "Unrecoverable journal bytes are preserved");
     }
     static void keyRace(Path root) throws Exception {
         var keys = new FakeKeychain() {

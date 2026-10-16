@@ -31,13 +31,18 @@ public final class MacKeychain implements StateKeychain {
     static final Security SEC = Native.load(SEC_LIB.getFile().toString(), Security.class);
     static final CoreFoundation CF = Native.load(CF_LIB.getFile().toString(), CoreFoundation.class);
     private final Pointer keychain;
+    private final boolean interactionAllowed;
 
-    public MacKeychain() { this(null); }
+    public MacKeychain() { this(null, false); }
+    public static MacKeychain interactiveDesktop() { return new MacKeychain(null, true); }
     // A retained keychain handle supplied only by the isolated native test fixture.
-    MacKeychain(Pointer keychain) { this.keychain = keychain; }
+    MacKeychain(Pointer keychain) { this(keychain, false); }
+    private MacKeychain(Pointer keychain, boolean interactionAllowed) {
+        this.keychain = keychain; this.interactionAllowed = interactionAllowed;
+    }
 
     @Override public byte[] read(String account) throws IOException {
-        disallowPrompts();
+        configureInteraction();
         try (var query = base(account)) {
             query.set("kSecReturnData", cfConstant("kCFBooleanTrue"));
             query.set("kSecMatchLimit", constant("kSecMatchLimitOne"));
@@ -59,7 +64,7 @@ public final class MacKeychain implements StateKeychain {
         }
     }
     @Override public boolean add(String account, byte[] key) throws IOException {
-        disallowPrompts();
+        configureInteraction();
         if (key.length != 32) throw new IOException("State key must be 256 bits");
         try (var attributes = base(account)) {
             Pointer data = CF.CFDataCreate(null, key, new NativeLong(key.length));
@@ -71,18 +76,17 @@ public final class MacKeychain implements StateKeychain {
             return true;
         }
     }
-    private static void disallowPrompts() throws IOException {
-        // The per-query UI flag alone does not suppress file-based keychain unlock dialogs.
-        // This switch affects only this process, not the user's keychain lock or other applications.
-        requireSuccess("disable process interaction", SEC.SecKeychainSetUserInteractionAllowed((byte) 0));
+    private void configureInteraction() throws IOException {
+        // File-based unlock dialogs also require the process-wide policy. Only explicit desktop
+        // startup opts in; headless callers and native fixtures continue to fail without prompting.
+        requireSuccess("set process interaction", SEC.SecKeychainSetUserInteractionAllowed((byte) (interactionAllowed ? 1 : 0)));
     }
-    private static Dictionary base(String account) {
+    private Dictionary base(String account) {
         var result = new Dictionary();
         result.set("kSecClass", constant("kSecClassGenericPassword"));
         result.string("kSecAttrService", SERVICE);
         result.string("kSecAttrAccount", account);
-        // Fail instead of showing an unexpected authentication prompt in a remote/headless session.
-        result.set("kSecUseAuthenticationUI", constant("kSecUseAuthenticationUIFail"));
+        result.set("kSecUseAuthenticationUI", constant(interactionAllowed ? "kSecUseAuthenticationUIAllow" : "kSecUseAuthenticationUIFail"));
         return result;
     }
     static void requireSuccess(String operation, int status) throws IOException {

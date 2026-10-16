@@ -14,16 +14,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
-/** Owns only its local Xray child. No OS networking operations or process enumeration are available. */
+/** Owns its local Xray child and an optional, explicitly wired system-proxy lifecycle. */
 public final class MacConnectionBackend implements ConnectionBackend, StartupRecovery {
     private final BackendCapabilities capabilities;
+    private final app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy;
     private final XrayRuntime runtime;
     private final XrayProcessManager process;
     private final NetworkDiagnostics diagnostics = new NetworkDiagnostics();
 
     public MacConnectionBackend(XrayRuntime runtime, Path data) { this(runtime, data, false); }
     public MacConnectionBackend(XrayRuntime runtime, Path data, boolean persistent) {
-        capabilities = persistent ? BackendCapabilities.macosLocal() : BackendCapabilities.macosLocalPreview();
+        this(runtime, data, persistent, null);
+    }
+    public MacConnectionBackend(XrayRuntime runtime, Path data, boolean persistent,
+                                app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy) {
+        if (systemProxy != null && !persistent) throw new IllegalArgumentException("System proxy requires durable recovery state");
+        this.systemProxy = systemProxy;
+        capabilities = systemProxy != null ? BackendCapabilities.macosSystemProxy()
+                : persistent ? BackendCapabilities.macosLocal() : BackendCapabilities.macosLocalPreview();
         if (runtime.target() == XrayRuntime.Target.WINDOWS_X64) throw new IllegalArgumentException("Darwin runtime required");
         this.runtime = runtime;
         this.process = new XrayProcessManager(runtime, data);
@@ -58,8 +66,24 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
         throw unavailable("Live route replacement"); // The existing controller falls back to an owned-core restart.
     }
     @Override public void stopOrphan() { throw unavailable("Orphan process recovery"); }
-    @Override public void applySystemProxy() { throw unavailable("System proxy"); }
-    @Override public void restoreSystemProxy() { throw unavailable("System proxy recovery"); }
+    @Override public void applySystemProxy() throws Exception {
+        if (systemProxy == null) throw unavailable("System proxy");
+        if (!process.isRunning()) throw new java.io.IOException("The owned proxy engine must be running before applying system settings");
+        for (int port : new int[]{app.perroute.service.AppProxyLauncher.HTTP_PORT, app.perroute.service.AppProxyLauncher.SOCKS_PORT}) {
+            try (var socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress("127.0.0.1", port), 1000);
+            }
+        }
+        systemProxy.apply();
+        if (!process.isRunning()) {
+            systemProxy.restore();
+            throw new java.io.IOException("The proxy engine stopped while applying system settings");
+        }
+    }
+    @Override public void restoreSystemProxy() throws Exception {
+        if (systemProxy == null) throw unavailable("System proxy recovery");
+        systemProxy.restore();
+    }
     @Override public void applyPerApp(List<String> apps) { throw unavailable("Per-app routing"); }
     @Override public void restorePerApp() { throw unavailable("Per-app recovery"); }
     @Override public void stopPerAppSidecar() { throw unavailable("Per-app sidecar"); }
@@ -73,6 +97,6 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
     @Override public void recover() { throw unavailable("Network recovery"); }
     @Override public void runGuard(Long parentPid) { throw unavailable("Network guard"); }
     private static UnsupportedOperationException unavailable(String feature) {
-        return new UnsupportedOperationException(feature + " is unavailable in the macOS local preview");
+        return new UnsupportedOperationException(feature + " is unavailable on this macOS backend");
     }
 }

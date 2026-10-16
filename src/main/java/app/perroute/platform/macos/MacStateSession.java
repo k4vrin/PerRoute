@@ -21,14 +21,18 @@ public final class MacStateSession implements AutoCloseable {
     private final AppStateStore store;
     private final AppState state;
     private final EncryptedPreferences preferences;
+    private final app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy;
     private boolean closed;
     private MacStateSession(SingleInstanceLock lock, MacStateCipher cipher, AppStateStore store,
-                            AppState state, EncryptedPreferences preferences) {
+                            AppState state, EncryptedPreferences preferences, Path recoveryFile) {
         this.lock = lock; this.cipher = cipher; this.store = store; this.state = state; this.preferences = preferences;
+        systemProxy = new app.perroute.platform.macos.proxy.MacSystemProxyService(
+                new app.perroute.platform.macos.proxy.EncryptedProxyJournal(recoveryFile, cipher));
     }
-    public static MacStateSession openDefault() throws IOException {
+    public static MacStateSession openDefault() throws IOException { return openDefault(false); }
+    public static MacStateSession openDefault(boolean interactiveDesktop) throws IOException {
         Path path = Path.of(System.getProperty("user.home"), "Library", "Application Support", "PerRoute");
-        try { return open(path, new MacKeychain()); }
+        try { return open(path, interactiveDesktop ? MacKeychain.interactiveDesktop() : new MacKeychain()); }
         catch (LinkageError error) { throw new IOException("macOS Keychain Services could not be loaded", error); }
     }
     public static MacStateSession open(Path directory, StateKeychain keychain) throws IOException {
@@ -42,10 +46,12 @@ public final class MacStateSession implements AutoCloseable {
             PrivateStateFiles.requireRegular(lockFile);
             Path stateFile = root.resolve("state.bin");
             Path preferenceFile = root.resolve("preferences.bin");
+            Path recoveryFile = root.resolve("proxy-recovery.bin");
             // Never silently migrate a raw local key or a copied Windows state into a new identity.
             if (Files.exists(root.resolve("state.bin.key"), LinkOption.NOFOLLOW_LINKS))
                 throw new IOException("Legacy local-key state requires explicit migration. Existing data was preserved.");
-            boolean existing = Files.exists(stateFile, LinkOption.NOFOLLOW_LINKS) || Files.exists(preferenceFile, LinkOption.NOFOLLOW_LINKS);
+            boolean existing = Files.exists(stateFile, LinkOption.NOFOLLOW_LINKS) || Files.exists(preferenceFile, LinkOption.NOFOLLOW_LINKS)
+                    || Files.exists(recoveryFile, LinkOption.NOFOLLOW_LINKS);
             String account = account(root);
             byte[] key = keychain.read(account);
             if (key == null) {
@@ -73,7 +79,7 @@ public final class MacStateSession implements AutoCloseable {
                     preferences.putBoolean(name, false);
                 preferences.putBoolean("v3.initialized", true);
             }
-            return new MacStateSession(lock, cipher, store, state, preferences);
+            return new MacStateSession(lock, cipher, store, state, preferences, recoveryFile);
         } catch (Throwable error) {
             if (cipher != null) cipher.close();
             lock.close();
@@ -86,6 +92,7 @@ public final class MacStateSession implements AutoCloseable {
             return "state-" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(directory.toAbsolutePath().normalize().toString().getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
+    public app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy() { return systemProxy; }
     public AppStateStore store() { return store; }
     public AppState state() { return state; }
     public EncryptedPreferences preferences() { return preferences; }

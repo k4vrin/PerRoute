@@ -246,6 +246,9 @@ private fun ConnectionSettings(shell: Shell) {
     }
     val locked = shell.locked
     SettingsPage("Connection") {
+        if (shell.controller.capabilities().supports(ConnectionMode.SYSTEM_PROXY) && !shell.controller.capabilities().perApp()) {
+            InfoBanner("System proxy configures one supported active network service. Disconnect restores original settings. After a forced quit, reopen PerRoute to retry recovery. Some apps ignore system proxies.", Modifier.fillMaxWidth())
+        }
         if (shell.controller.capabilities().persistentState() && !shell.controller.capabilities().supports(ConnectionMode.SYSTEM_PROXY)) {
             InfoBanner("Servers and settings are encrypted with a key held in macOS Keychain. System networking is unchanged.", Modifier.fillMaxWidth())
         }
@@ -304,7 +307,7 @@ private fun ModeRow(mode: ConnectionMode, selected: Boolean, enabled: Boolean, d
     val (title, detail) = when (mode) {
         ConnectionMode.NATIVE_PER_APP -> "Smart per-app" to "Only selected apps use the proxy"
         ConnectionMode.BROWSER_PROXY -> "Local proxy" to "Set a SOCKS5 or HTTP proxy inside individual apps"
-        ConnectionMode.SYSTEM_PROXY -> "System proxy" to "Apps that follow Windows proxy settings"
+        ConnectionMode.SYSTEM_PROXY -> "System proxy" to "Apps that follow system proxy settings"
         ConnectionMode.TUN_COMPATIBILITY -> "TUN compatibility" to "Broad compatibility; requires Administrator"
     }
     Row(
@@ -325,7 +328,7 @@ private fun ModeRow(mode: ConnectionMode, selected: Boolean, enabled: Boolean, d
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
             Text(title, color = White, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-            Text(if (!supported) "Unavailable in this macOS local preview." else if (driverMissing) "Needs the per-app driver from the Full Installer. See Components." else detail,
+            Text(if (!supported) "Unavailable on macOS." else if (driverMissing) "Needs the per-app driver from the Full Installer. See Components." else detail,
                 color = if (driverMissing) Amber else Muted, fontSize = 10.5.sp)
         }
         RadioMark(selected)

@@ -313,6 +313,7 @@ internal fun ConnectionScreen(shell: Shell) {
         }
         val banner: @Composable () -> Unit = {
             when {
+                shell.mode == ConnectionMode.SYSTEM_PROXY && !shell.controller.capabilities().perApp() -> InfoBanner("macOS System proxy: Connect configures the active supported service; Disconnect restores its original settings. After a forced quit, reopen PerRoute to retry recovery. Apps may ignore system proxies.", Modifier.fillMaxWidth())
                 !shell.controller.capabilities().supports(app.perroute.model.ConnectionMode.SYSTEM_PROXY) && shell.controller.capabilities().persistentState() -> InfoBanner("macOS Local proxy: servers and settings are saved with a Keychain-protected key. Only apps configured for the loopback proxy use it.", Modifier.fillMaxWidth())
                 !shell.controller.capabilities().persistentState() -> InfoBanner("macOS local preview: servers and settings are temporary and discarded on quit. Only apps configured for the loopback proxy use it.", Modifier.fillMaxWidth())
                 missing.isNotEmpty() -> InfoBanner(
@@ -326,7 +327,7 @@ internal fun ConnectionScreen(shell: Shell) {
                 }
                 !shell.perApp -> InfoBanner(when (shell.mode) {
                     ConnectionMode.BROWSER_PROXY -> "Enter either endpoint in an application's own proxy settings. Everything else stays direct."
-                    ConnectionMode.SYSTEM_PROXY -> "Applications that follow Windows proxy settings use the main server."
+                    ConnectionMode.SYSTEM_PROXY -> "Applications that follow system proxy settings use the main server."
                     else -> "Network traffic is routed by the compatibility tunnel."
                 }, Modifier.fillMaxWidth(), icon = Icons.Rounded.Shield) { Badge(modeLabel(shell.mode), Muted) }
                 shell.connected && monitoring && rows.size > 1 -> {
@@ -472,7 +473,7 @@ private fun RouteSummaryRow(shell: Shell, row: RouteRow, check: RouteCheck?, hea
         }
         Box(Modifier.weight(1.3f).padding(end = 8.dp)) {
             when {
-                !shell.perApp -> Text(if (shell.mode == ConnectionMode.SYSTEM_PROXY) "Apps that follow Windows proxy settings" else "Apps you point at the local proxy",
+                !shell.perApp -> Text(if (shell.mode == ConnectionMode.SYSTEM_PROXY) "Apps that follow system proxy settings" else "Apps you point at the local proxy",
                     color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 row.applications.isEmpty() -> Text("No selected app", color = Muted, fontSize = 11.sp)
                 else -> Tooltip(row.applications.joinToString("\n") { appName(it) }) {

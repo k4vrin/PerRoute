@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.util.*;
 import static app.perroute.platform.macos.proxy.ProxyJournal.*;
 
-/** Policy only. Production bootstrap intentionally supplies no native settings port yet. */
+/** Ownership and recovery policy over an injected settings session and durable intent journal. */
 public final class SystemProxyOwnership {
     private final SystemProxySettings settings;
     private final ProxyJournal journal;
