@@ -83,6 +83,30 @@ class ProofBoundaryTests(unittest.TestCase):
 
 
 class PrivilegedLauncherTests(unittest.TestCase):
+    @unittest.skipUnless(platform.system() == 'Darwin' and os.geteuid() != 0, 'macOS ordinary-user lifecycle')
+    def test_deadline_reaps_term_ignoring_child(self):
+        from macos_privileged_routing_proof import prepare_launcher, SOURCE
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            engine, config = root / 'engine', root / 'config'
+            engine.write_text("#!/bin/sh\ntrap '' TERM\nexec /bin/sleep 60\n")
+            config.write_text('{}')
+            prepare_launcher(engine, config, root)
+            # This disposable test copy alone bypasses the UID check. The real launcher
+            # still refuses ordinary users, as checked above; no administrator is used.
+            source = root / 'Lifecycle.c'
+            source.write_text(SOURCE.read_text().replace(
+                'int main(', '#define geteuid() ((uid_t)0)\nint main(', 1))
+            executable = root / 'Lifecycle'
+            subprocess.run(['xcrun', 'clang', '-Wall', '-Wextra', '-Werror',
+                            '-Wno-deprecated-declarations', '-mmacosx-version-min=13.0',
+                            '-I', str(root), str(source), '-o', str(executable)], check=True, timeout=30)
+            before = set(Path('/private/tmp').glob('perroute-root-proof.*'))
+            result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=28)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('root staging removed', result.stdout)
+            self.assertEqual(set(Path('/private/tmp').glob('perroute-root-proof.*')), before)
+
     @unittest.skipUnless(platform.system() == 'Darwin' and os.geteuid() != 0, 'macOS ordinary-user native validation')
     def test_fixed_payload_pins_and_refusals(self):
         from macos_privileged_routing_proof import prepare_launcher

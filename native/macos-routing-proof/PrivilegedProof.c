@@ -54,6 +54,24 @@ static bool verified_copy(const char *source, const char *target, const char *ex
     return valid && total == (size_t)info.st_size && !strcmp(hex, expected);
 }
 
+// Signal the known child directly as well as its group. Reaping must stay bounded
+// even if a process-group operation fails or the engine refuses graceful shutdown.
+static bool stop_child(pid_t child) {
+    const int signals[] = {SIGTERM, SIGKILL};
+    struct timespec pause = {.tv_sec = 0, .tv_nsec = 50000000};
+    for (size_t stage = 0; stage < sizeof(signals) / sizeof(signals[0]); stage++) {
+        kill(-child, signals[stage]);
+        if (kill(child, signals[stage]) && errno != ESRCH) return false;
+        for (int attempt = 0; attempt < 40; attempt++) {
+            pid_t waited = waitpid(child, NULL, WNOHANG);
+            if (waited == child || (waited < 0 && errno == ECHILD)) return true;
+            if (waited < 0 && errno != EINTR) return false;
+            nanosleep(&pause, NULL);
+        }
+    }
+    return false;
+}
+
 int main(int argc, char **argv) {
     bool verify_only = argc == 2 && !strcmp(argv[1], "--verify-only");
     if (!verify_only && (argc != 1 || geteuid() != 0)) return 77;
@@ -74,7 +92,6 @@ int main(int argc, char **argv) {
         !verified_copy(PROOF_CONFIG, config, PROOF_CONFIG_HASH, 1024 * 1024, 0600)) goto cleanup;
     signal(SIGTERM, stop_requested);
     signal(SIGINT, stop_requested);
-    signal(SIGALRM, stop_requested);
     pid_t child = fork();
     if (child < 0) goto cleanup;
     if (!child) {
@@ -89,33 +106,35 @@ int main(int argc, char **argv) {
         _exit(79);
     }
     setpgid(child, child);
-    alarm(20);
+    // The live comparison outlived its signal-based deadline. Check elapsed time
+    // directly so termination does not depend on receiving SIGALRM.
+    struct timespec deadline;
+    if (clock_gettime(CLOCK_MONOTONIC, &deadline)) {
+        if (!stop_child(child)) return 81;
+        goto cleanup;
+    }
+    deadline.tv_sec += 20;
     int status = 0;
     pid_t waited = 0;
     struct timespec pause = {.tv_sec = 0, .tv_nsec = 50000000};
+    bool timer_failed = false;
     while (!stopping) {
+        struct timespec now;
+        if (clock_gettime(CLOCK_MONOTONIC, &now)) { timer_failed = true; break; }
+        if (now.tv_sec > deadline.tv_sec ||
+            (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec)) break;
         waited = waitpid(child, &status, WNOHANG);
         if (waited == child) break;
         if (waited < 0 && errno != EINTR) break;
         nanosleep(&pause, NULL);
     }
     if (waited != child) {
-        kill(-child, SIGTERM);
-        for (int i = 0; i < 40; i++) {
-            waited = waitpid(child, &status, WNOHANG);
-            if (waited == child) break;
-            nanosleep(&pause, NULL);
-        }
-        if (waited != child) {
-            kill(-child, SIGKILL);
-            while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
-        }
-        outcome = 0;
+        if (!stop_child(child)) return 81;
+        outcome = timer_failed ? 78 : 0;
     } else {
         // Early engine exit must fail the comparison rather than look like a completed test.
         outcome = 79;
     }
-    alarm(0);
 cleanup:
     if (unlink(engine) && errno != ENOENT) outcome = 80;
     if (unlink(config) && errno != ENOENT) outcome = 80;
