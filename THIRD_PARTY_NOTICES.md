@@ -23,3 +23,18 @@ PerRoute bundles the unmodified JNA 5.17.0 library and its `jnidispatch.dll`
 stub to call Windows DPAPI in-process. JNA is dual-licensed under the Apache
 License 2.0 and the LGPL 2.1 or later; PerRoute uses it under Apache-2.0.
 Source: https://github.com/java-native-access/jna
+
+## Optional macOS per-app development checker
+
+The explicit `checkMacosPerAppRoutingCandidate` task downloads and runs the
+unmodified standalone sing-box 1.14.3 configuration checker. Official macOS
+archive SHA-256 digests are pinned in `scripts/verify_macos_per_app.py`. The
+engine stays in temporary development staging and is not bundled with PerRoute
+or started as a TUN service by this task.
+
+Source and exact license: https://github.com/SagerNet/sing-box/tree/v1.14.3
+and https://github.com/SagerNet/sing-box/blob/v1.14.3/LICENSE. Upstream specifies
+GPL-3.0-or-later and an additional restriction on derivative-work naming or
+implied association. Any future distribution must retain the applicable
+license/source obligations and review those terms before bundling. PerRoute
+does not claim upstream affiliation.

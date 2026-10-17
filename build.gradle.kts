@@ -488,3 +488,17 @@ tasks.register<Exec>("stageMacosLocalHelper") {
     commandLine("python3", "scripts/macos_local_helper.py", "--app",
         layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app").get().asFile.absolutePath)
 }
+
+tasks.register<JavaExec>("runMacosPerAppRoutingPlanTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.MacosPerAppRoutingPlanTests")
+    args(layout.buildDirectory.file("macos-per-app-routing/candidate.json").get().asFile.absolutePath)
+    enableAssertions = true
+}
+
+tasks.register<Exec>("checkMacosPerAppRoutingCandidate") {
+    dependsOn(tasks.named("runMacosPerAppRoutingPlanTests"))
+    commandLine("python3", "scripts/verify_macos_per_app.py", "--config",
+        layout.buildDirectory.file("macos-per-app-routing/candidate.json").get().asFile.absolutePath)
+}
