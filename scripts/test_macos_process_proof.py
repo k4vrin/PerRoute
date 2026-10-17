@@ -2,6 +2,10 @@
 import copy
 from pathlib import Path
 import tempfile
+import os
+import platform
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -18,7 +22,10 @@ class ProofBoundaryTests(unittest.TestCase):
                 'outbounds': [{'type': 'direct', 'tag': 'unmatched-direct'}] + [
                     {'type': 'socks', 'tag': f'xray-loopback-{port}', 'server': '127.0.0.1',
                      'server_port': port, 'version': '5'} for port in (30003, 30004)],
-                'route': {'auto_detect_interface': True, 'rules': [], 'final': 'unmatched-direct'}}
+                'route': {'auto_detect_interface': True, 'rules': [
+                    {'process_path': ['/fixture/engine'], 'action': 'route', 'outbound': 'unmatched-direct'},
+                    {'process_path': ['/fixture/client'], 'inbound': ['perroute-tun-spike'], 'network': 'tcp',
+                     'action': 'route', 'outbound': 'xray-loopback-30003'}], 'final': 'unmatched-direct'}}
 
     def validate(self, config):
         assert_loopback_fixture(config, 30001, 30002, [30003, 30004])
@@ -38,12 +45,25 @@ class ProofBoundaryTests(unittest.TestCase):
             lambda c: c.update(dns={'servers': []}),
             lambda c: c['route'].update(rule_set=[{'url': 'https://example.invalid'}]),
             lambda c: c.update(log={'level': 'debug'}),
+            lambda c: c['route']['rules'][1].update(override_address='192.0.2.1'),
+            lambda c: c['route']['rules'][1].update(action='resolve'),
+            lambda c: c['route'].update(final='unknown'),
+            lambda c: c['route'].update(auto_detect_interface=False),
+            lambda c: c['route'].update(rules=[]),
         ]
         for mutate in mutations:
             config = copy.deepcopy(self.fixture())
             mutate(config)
             with self.subTest(config=config), self.assertRaises(ValueError):
                 self.validate(config)
+
+    def test_conflicting_proof_modes_refused(self):
+        script = Path(__file__).with_name('prove_macos_process_routing.py')
+        result = subprocess.run([sys.executable, str(script), '--java', 'unused', '--classpath', 'unused',
+                                 '--client', 'unused', '--probe', 'unused', '--native-only', '--privileged'],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('not allowed with argument', result.stderr)
 
     def test_tampered_archive(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -60,6 +80,42 @@ class ProofBoundaryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     check(path)
                 stage.assert_not_called()
+
+
+class PrivilegedLauncherTests(unittest.TestCase):
+    @unittest.skipUnless(platform.system() == 'Darwin' and os.geteuid() != 0, 'macOS ordinary-user native validation')
+    def test_fixed_payload_pins_and_refusals(self):
+        from macos_privileged_routing_proof import prepare_launcher
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            engine, config = root / 'engine', root / 'config'
+            engine.write_bytes(b'synthetic engine, never executed')
+            config.write_bytes(b'synthetic config, never interpreted')
+            executable = prepare_launcher(engine, config, root)
+            original_engine, original_config = engine.read_bytes(), config.read_bytes()
+            def refused():
+                result = subprocess.run([str(executable), '--verify-only'], capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 78)
+            engine.write_bytes(b'tampered engine')
+            refused()
+            engine.write_bytes(original_engine)
+            config.write_bytes(b'tampered config')
+            refused()
+            config.write_bytes(original_config)
+            renamed = root / 'renamed'
+            engine.rename(renamed)
+            engine.symlink_to(renamed)
+            refused()
+            engine.unlink()
+            renamed.rename(engine)
+            config.write_bytes(b'x' * (1024 * 1024 + 1))
+            refused()
+            config.write_bytes(original_config)
+            config.unlink()
+            config.mkdir()
+            refused()
+            invalid_argument = subprocess.run([str(executable), '--run-arbitrary'], capture_output=True, timeout=5)
+            self.assertEqual(invalid_argument.returncode, 77)
 
 
 if __name__ == '__main__':

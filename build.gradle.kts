@@ -533,6 +533,8 @@ tasks.register<Exec>("proveMacosProcessRouting") {
             "--classpath", sourceSets["test"].runtimeClasspath.asPath, "--client",
             layout.buildDirectory.file("macos-per-app-routing/Client").get().asFile.absolutePath,
             "--probe", layout.buildDirectory.file("macos-per-app-routing/OwnerProbe").get().asFile.absolutePath)
+        if (providers.gradleProperty("privilegedRoutingProof").map { it.toBoolean() }.getOrElse(false)) args("--privileged")
+        if (providers.gradleProperty("preparePrivilegedRoutingProof").map { it.toBoolean() }.getOrElse(false)) args("--prepare-privileged")
         if (providers.gradleProperty("nativeAttributionOnly").map { it.toBoolean() }.getOrElse(false)) args("--native-only")
     }
 }

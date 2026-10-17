@@ -141,8 +141,26 @@ def assert_loopback_fixture(config, inbound_port, destination_port, relay_ports)
     if config['outbounds'] != expected_outbounds:
         raise ValueError('Expected only the two owned SOCKS fixtures and direct fallback')
     # No DNS, API, download, route activation or other top-level feature can enter this config.
-    if set(config['route']) != {'auto_detect_interface', 'rules', 'final'}:
+    if (set(config['route']) != {'auto_detect_interface', 'rules', 'final'} or
+            config['route']['auto_detect_interface'] is not True or config['route']['final'] != 'unmatched-direct'):
         raise ValueError('Unexpected route settings')
+    rules = config['route']['rules']
+    if not isinstance(rules, list) or not 1 <= len(rules) <= 257:
+        raise ValueError('Expected bounded exact process routing rules')
+    for index, rule in enumerate(rules):
+        keys = {'process_path', 'action', 'outbound'} | ({'inbound', 'network'} if index else set())
+        if set(rule) != keys or rule['action'] != 'route':
+            raise ValueError('Only generated exact process route actions are allowed')
+        if not isinstance(rule['process_path'], list) or not 1 <= len(rule['process_path']) <= 256:
+            raise ValueError('Expected bounded explicit executable paths')
+        if any(not isinstance(path, str) or not path.startswith('/') for path in rule['process_path']):
+            raise ValueError('Expected absolute executable paths')
+        if not index:
+            if rule['outbound'] != 'unmatched-direct':
+                raise ValueError('Engine exclusion must be direct')
+        elif (rule['inbound'] != ['perroute-tun-spike'] or rule['network'] != 'tcp' or
+              rule['outbound'] not in {f'xray-loopback-{port}' for port in relay_ports}):
+            raise ValueError('Expected selected TCP loopback endpoint rules')
 
 
 def prove_owned_client(client, probe):
@@ -174,7 +192,7 @@ def prove_owned_client(client, probe):
     print('Native attribution: exact owned tuple/path accepted; wrong tuple and path refused', flush=True)
 
 
-def prove(java, classpath, client, probe, native_only=False):
+def prove(java, classpath, client, probe, native_only=False, privileged=False, prepare_privileged=False):
     prove_owned_client(client, probe)
     if native_only:
         return
@@ -197,7 +215,7 @@ def prove(java, classpath, client, probe, native_only=False):
         for relay in relays:
             relay.destination = echo.port
         checks = 0
-        for phase in ('main', 'helper'):
+        for phase in (('main',) if privileged or prepare_privileged else ('main', 'helper')):
             # Reserve an ephemeral port until the engine is about to bind. A racing bind causes
             # an explicit startup failure, never reuse of the installed app's fixed ports.
             with socket.socket() as reservation:
@@ -210,7 +228,14 @@ def prove(java, classpath, client, probe, native_only=False):
                                check=True, timeout=20)
                 assert_loopback_fixture(json.loads(config_path.read_text()), port, echo.port,
                                         [relay.port for relay in relays])
-            with running_engine(engine, config_path, port):
+            if privileged or prepare_privileged:
+                from macos_privileged_routing_proof import privileged_engine
+                runtime = privileged_engine(engine, config_path, port, prepare_privileged)
+            else:
+                runtime = running_engine(engine, config_path, port)
+            with runtime:
+                if prepare_privileged:
+                    return
                 def request(label, expected_relay, succeeds=True):
                     nonlocal checks
                     before = [relay.events.qsize() for relay in relays]
@@ -246,7 +271,8 @@ def prove(java, classpath, client, probe, native_only=False):
                 request('unselected', None)
                 relays[0].available = True
                 request('selected-a', 0)
-        print(f'Native macOS {architecture} process routing: {checks} controlled requests passed')
+        print(f'Native macOS {architecture} process routing: {checks} controlled requests passed; '
+              f'privileged={privileged}; phases=' + ('main only' if privileged else 'main and helper'))
         print('No TUN, host routes, DNS, system proxy, helper service or installed app was changed')
 
 
@@ -256,7 +282,10 @@ if __name__ == '__main__':
     parser.add_argument('--classpath', required=True)
     parser.add_argument('--client', type=Path, required=True)
     parser.add_argument('--probe', type=Path, required=True)
-    parser.add_argument('--native-only', action='store_true')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--native-only', action='store_true')
+    modes.add_argument('--privileged', action='store_true')
+    modes.add_argument('--prepare-privileged', action='store_true')
     arguments = parser.parse_args()
     prove(arguments.java, arguments.classpath, arguments.client.resolve(strict=True),
-          arguments.probe.resolve(strict=True), arguments.native_only)
+          arguments.probe.resolve(strict=True), arguments.native_only, arguments.privileged, arguments.prepare_privileged)
