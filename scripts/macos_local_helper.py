@@ -72,9 +72,9 @@ def build(app):
         helper = contents / 'Library/HelperTools/PerRouteProxyHelper'
         bridge = contents / 'Frameworks/libPerRouteProxyBridge.dylib'
         installer = contents / 'MacOS/PerRouteHelperInstaller'
-        compile_native(helper, ['ProxyJournal.m', 'ProxyHelper.m'], settings, ['SystemConfiguration'], info=SOURCES / 'HelperInfo.plist')
+        compile_native(helper, ['ProxyJournal.m', 'ProxyHelper.m', '../macos-tun/TunStore.m', '../macos-tun/TunSession.m', '../macos-tun/EngineWorker.c'], settings, ['SystemConfiguration'], info=SOURCES / 'HelperInfo.plist')
         compile_native(bridge, ['ProxyBridge.m'], settings, ['ServiceManagement'], library=True)
-        compile_native(installer, ['LocalInstaller.m'], settings, [])
+        compile_native(installer, ['LocalInstaller.m', '../macos-tun/TunStore.m'], settings, [])
         # The local service is installed with fixed ProgramArguments. Never register the incompatible
         # SMAppService BundleProgram manifest from this account-free artifact.
         (contents / 'Library/LaunchDaemons/app.perroute.proxy-helper.plist').unlink(missing_ok=True)

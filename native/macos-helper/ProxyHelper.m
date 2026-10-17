@@ -1,5 +1,6 @@
 #import "ProxyHelper.h"
 #import "ProxyJournal.h"
+#import "../macos-tun/TunSession.h"
 #import <SystemConfiguration/SystemConfiguration.h>
 #import <unistd.h>
 
@@ -7,6 +8,14 @@
 // while the root-owned intent survives client death, helper restart and partial commit/apply failure.
 static dispatch_queue_t Work;
 static PRRootJournal *Journal;
+static PRTunStore *TunStore;
+
+static BOOL RecoverTun(NSError **error) {
+    NSArray *sessions = [TunStore sessions:error];
+    if (!sessions) return NO;
+    for (NSString *session in sessions) if (![TunStore cleanup:session error:error]) return NO;
+    return YES;
+}
 static NSXPCConnection *LeaseConnection;
 static NSXPCConnection *RetiringConnection;
 static dispatch_source_t RecoveryTimer;
@@ -117,6 +126,7 @@ static NSDictionary *Restore(uid_t caller, NSError **error) {
 }
 
 static NSDictionary *Apply(NSDictionary *request, uid_t uid, NSXPCConnection *connection, NSError **error) {
+    if (!RecoverTun(error)) return nil;
     if (RetiringConnection) { *error = PRError(@"The helper is being removed; no new proxy lease is allowed"); return nil; }
     id identifier = request[@"service"], http = request[@"http"], socks = request[@"socks"], expected = request[@"expected"];
     NSSet *keys = [NSSet setWithArray:@[@"version", @"operation", @"service", @"http", @"socks", @"expected"]];
@@ -178,7 +188,7 @@ static NSDictionary *Apply(NSDictionary *request, uid_t uid, NSXPCConnection *co
                 BOOL owned = lease && LeaseConnection == connection && [lease[@"uid"] unsignedIntValue] == self.uid;
                 result = PRSessionStatus(lease != nil, owned);
             } else if ([operation isEqual:@"retire"] && request.count == 2) {
-                result = Restore(self.uid, &error);
+                result = RecoverTun(&error) ? Restore(self.uid, &error) : nil;
                 if (result && !error) {
                     // Keep this authenticated connection as a maintenance barrier until unregister
                     // completes or its client exits. No other client may apply between restore/remove.
@@ -228,20 +238,31 @@ static NSDictionary *Apply(NSDictionary *request, uid_t uid, NSXPCConnection *co
 }
 @end
 
-int main(void) {
+int main(int argc, const char **argv) {
     @autoreleasepool {
         NSString *team = PRSigningTeam();
         if (geteuid() != 0 || !team) return 78;
         NSError *error = nil;
+        TunStore = [[PRTunStore alloc] initSystem:&error];
+        if (!TunStore) return 78;
+        // Only the authenticated root helper launches this copied, signed executable.
+        // Its fixed internal mode never initializes XPC or accepts engine paths/configuration.
+        if (argc == 3 && !strcmp(argv[1],"--tun-worker"))
+            return PRRunStagedTunWorker(TunStore,[NSString stringWithUTF8String:argv[2]],3);
+        if (argc != 1) return 78;
         Journal = [[PRRootJournal alloc] initWithError:&error];
         if (!Journal) return 78;
         Work = dispatch_queue_create("app.perroute.proxy-helper.work", dispatch_queue_attr_make_with_autorelease_frequency(DISPATCH_QUEUE_SERIAL, DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM));
         // A helper restart cannot leave an old owned lease behind indefinitely. Conflicts stay journaled.
+        if (!RecoverTun(&error)) NSLog(@"PerRoute startup TUN recovery remains pending");
+        error = nil;
         Restore(0, &error);
         if (error) NSLog(@"PerRoute startup proxy recovery remains pending");
         RecoveryTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, Work);
         dispatch_source_set_timer(RecoveryTimer, dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), 15 * NSEC_PER_SEC, NSEC_PER_SEC);
         dispatch_source_set_event_handler(RecoveryTimer, ^{
+            NSError *tunError = nil;
+            if (!RecoverTun(&tunError)) NSLog(@"PerRoute TUN recovery remains pending");
             if (!LeaseConnection) { NSError *retryError = nil; Restore(0, &retryError); }
         });
         dispatch_resume(RecoveryTimer);

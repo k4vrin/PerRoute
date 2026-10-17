@@ -1,4 +1,5 @@
 #import "ProxyHelper.h"
+#import "../macos-tun/TunStore.h"
 #import <Security/Security.h>
 #import <sys/stat.h>
 #import <fcntl.h>
@@ -11,6 +12,14 @@ static NSString *const Plist = @"/Library/LaunchDaemons/app.perroute.proxy-helpe
 static BOOL Directory(NSString *path) {
     struct stat info;
     return lstat(path.fileSystemRepresentation, &info) == 0 && S_ISDIR(info.st_mode) && info.st_uid == 0 && !(info.st_mode & 0022);
+}
+static BOOL TunRecoveryClear(void) {
+    int directory = open("/Library/Application Support/PerRoute/TunHelper", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (directory < 0) return errno == ENOENT;
+    PRTunStore *store = [[PRTunStore alloc] initWithDirectoryDescriptor:directory error:NULL];
+    close(directory);
+    NSArray *sessions = [store sessions:NULL];
+    return sessions && sessions.count == 0;
 }
 static BOOL Signed(NSString *path) {
     SecStaticCodeRef code = NULL;
@@ -85,11 +94,11 @@ int main(int argc, const char *argv[]) {
             }
             if (!Signed(Binary)) return 78;
             NSString *lease = @"/Library/Application Support/PerRoute/ProxyHelper/lease.plist";
-            if (lstat(lease.fileSystemRepresentation, &info) == 0 || errno != ENOENT) return 78;
+            if (lstat(lease.fileSystemRepresentation, &info) == 0 || errno != ENOENT || !TunRecoveryClear()) return 78;
             if (Launchctl(@[@"bootout", @"system", Plist]) != 0) return 78;
             // The normal caller holds the authenticated retirement barrier. Also protect direct
             // administrator invocation racing an apply: keep artifacts and restart recovery.
-            if (lstat(lease.fileSystemRepresentation, &info) == 0 || errno != ENOENT) {
+            if (lstat(lease.fileSystemRepresentation, &info) == 0 || errno != ENOENT || !TunRecoveryClear()) {
                 Launchctl(@[@"bootstrap", @"system", Plist]); return 78;
             }
             if (unlink(Plist.fileSystemRepresentation) != 0 || unlink(Binary.fileSystemRepresentation) != 0) return 78;
@@ -102,6 +111,7 @@ int main(int argc, const char *argv[]) {
                 fprintf(stderr, "Existing helper or recovery state requires explicit maintenance; installation refused\n"); return 78;
             }
         }
+        if (!TunRecoveryClear()) return 78;
         char staging[] = "/Library/PrivilegedHelperTools/.perroute-install-XXXXXX";
         if (!mkdtemp(staging)) return 78;
         NSString *directory = [NSString stringWithUTF8String:staging];

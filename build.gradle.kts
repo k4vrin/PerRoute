@@ -361,6 +361,7 @@ val macosHelperOutput = layout.buildDirectory.dir("macos-helper")
 val helperSources = layout.projectDirectory.dir("native/macos-helper")
 val buildMacosProxyHelper = tasks.register<Exec>("buildMacosProxyHelper") {
     inputs.dir(helperSources)
+    inputs.files("native/macos-tun/TunStore.h", "native/macos-tun/TunStore.m", "native/macos-tun/TunSession.h", "native/macos-tun/TunSession.m", "native/macos-tun/EngineWorker.h", "native/macos-tun/EngineWorker.c")
     outputs.file(macosHelperOutput.map { it.file("PerRouteProxyHelper") })
     onlyIf { System.getProperty("os.name") == "Mac OS X" }
     doFirst { macosHelperOutput.get().asFile.mkdirs() }
@@ -368,6 +369,7 @@ val buildMacosProxyHelper = tasks.register<Exec>("buildMacosProxyHelper") {
         "-mmacosx-version-min=13.0", "-arch", "arm64", "-arch", "x86_64",
         "-framework", "Foundation", "-framework", "Security", "-framework", "SystemConfiguration",
         "native/macos-helper/ProxyPolicy.m", "native/macos-helper/ProxyJournal.m", "native/macos-helper/ProxyHelper.m",
+        "native/macos-tun/TunStore.m", "native/macos-tun/TunSession.m", "native/macos-tun/EngineWorker.c",
         "-Wl,-sectcreate,__TEXT,__info_plist,${helperSources.file("HelperInfo.plist").asFile.absolutePath}",
         "-o", macosHelperOutput.get().file("PerRouteProxyHelper").asFile.absolutePath)
 }
@@ -598,4 +600,44 @@ tasks.register<Exec>("runMacosTunWorkerTests") {
     onlyIf { System.getProperty("os.name") == "Mac OS X" }
     commandLine(layout.buildDirectory.file("macos-tun/worker-tests").get().asFile.absolutePath,
         layout.buildDirectory.file("macos-tun/worker-fixture").get().asFile.absolutePath)
+}
+
+// Same-user recovery tests use disposable ad-hoc fixtures, never the installed helper or TUN capture.
+fun tunTestBinary(taskName: String, binary: String, sources: List<String>, foundation: Boolean = true) = tasks.register<Exec>(taskName) {
+    inputs.files(sources)
+    inputs.files("native/macos-tun/TunStore.h", "native/macos-tun/TunSession.h", "native/macos-tun/EngineWorker.h")
+    outputs.file(layout.buildDirectory.file("macos-tun/$binary"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { layout.buildDirectory.dir("macos-tun").get().asFile.mkdirs() }
+    commandLine(listOf("xcrun", "clang", "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=13.0") +
+        (if (foundation) listOf("-fobjc-arc", "-framework", "Foundation", "-framework", "Security") else emptyList()) +
+        sources + listOf("-o", layout.buildDirectory.file("macos-tun/$binary").get().asFile.absolutePath))
+}
+fun tunFixtureSignature(taskName: String, binary: String, identity: String, dependency: org.gradle.api.tasks.TaskProvider<Exec>) = tasks.register<Exec>(taskName) {
+    dependsOn(dependency)
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine("/usr/bin/codesign", "--force", "--sign", "-", "--identifier", identity,
+        layout.buildDirectory.file("macos-tun/$binary").get().asFile.absolutePath)
+}
+val tunSessionSources = listOf("native/macos-tun/TunStore.m", "native/macos-tun/TunSession.m", "native/macos-tun/EngineWorker.c")
+val storeFixture = tunTestBinary("compileMacosTunStoreFixture", "store-fixture", listOf("native/macos-tun/StoreFixture.c"), false)
+val signStoreFixture = tunFixtureSignature("signMacosTunStoreFixture", "store-fixture", "app.perroute.store-fixture", storeFixture)
+val storeTests = tunTestBinary("compileMacosTunStoreTests", "store-tests", listOf("native/macos-tun/TunStore.m", "native/macos-tun/StoreTests.m"))
+tasks.register<Exec>("runMacosTunStoreTests") {
+    dependsOn(signStoreFixture,storeTests)
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(layout.buildDirectory.file("macos-tun/store-tests").get().asFile.absolutePath,
+        layout.buildDirectory.file("macos-tun/store-fixture").get().asFile.absolutePath)
+}
+val sessionEngine = tunTestBinary("compileMacosTunSessionEngine", "session-engine", listOf("native/macos-tun/WorkerFixture.c"), false)
+val signSessionEngine = tunFixtureSignature("signMacosTunSessionEngine", "session-engine", "app.perroute.session-engine", sessionEngine)
+val sessionWorker = tunTestBinary("compileMacosTunSessionWorker", "session-worker", tunSessionSources + "native/macos-tun/SessionFixture.m")
+val signSessionWorker = tunFixtureSignature("signMacosTunSessionWorker", "session-worker", "app.perroute.session-worker", sessionWorker)
+val sessionTests = tunTestBinary("compileMacosTunSessionTests", "session-tests", tunSessionSources + "native/macos-tun/SessionTests.m")
+tasks.register<Exec>("runMacosTunSessionTests") {
+    dependsOn(signSessionEngine,signSessionWorker,sessionTests)
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(layout.buildDirectory.file("macos-tun/session-tests").get().asFile.absolutePath,
+        layout.buildDirectory.file("macos-tun/session-engine").get().asFile.absolutePath,
+        layout.buildDirectory.file("macos-tun/session-worker").get().asFile.absolutePath)
 }
