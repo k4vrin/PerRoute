@@ -574,3 +574,28 @@ tasks.register<Exec>("checkMacosTunPolicyCandidate") {
     commandLine("python3", "scripts/verify_macos_per_app.py", "--config",
         layout.buildDirectory.file("macos-tun/native-candidate.json").get().asFile.absolutePath)
 }
+
+val compileMacosTunWorkerTests = tasks.register<Exec>("compileMacosTunWorkerTests") {
+    inputs.files("native/macos-tun/EngineWorker.h", "native/macos-tun/EngineWorker.c", "native/macos-tun/WorkerTests.c")
+    outputs.file(layout.buildDirectory.file("macos-tun/worker-tests"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { layout.buildDirectory.dir("macos-tun").get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=13.0",
+        "native/macos-tun/EngineWorker.c", "native/macos-tun/WorkerTests.c", "-o",
+        layout.buildDirectory.file("macos-tun/worker-tests").get().asFile.absolutePath)
+}
+val compileMacosTunWorkerFixture = tasks.register<Exec>("compileMacosTunWorkerFixture") {
+    inputs.file("native/macos-tun/WorkerFixture.c")
+    outputs.file(layout.buildDirectory.file("macos-tun/worker-fixture"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { layout.buildDirectory.dir("macos-tun").get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=13.0",
+        "native/macos-tun/WorkerFixture.c", "-o",
+        layout.buildDirectory.file("macos-tun/worker-fixture").get().asFile.absolutePath)
+}
+tasks.register<Exec>("runMacosTunWorkerTests") {
+    dependsOn(compileMacosTunWorkerTests, compileMacosTunWorkerFixture)
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(layout.buildDirectory.file("macos-tun/worker-tests").get().asFile.absolutePath,
+        layout.buildDirectory.file("macos-tun/worker-fixture").get().asFile.absolutePath)
+}
