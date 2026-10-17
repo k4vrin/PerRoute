@@ -10,6 +10,14 @@ static void CleanupFixtures(void) { @autoreleasepool {
     while (waitpid(-1,NULL,WNOHANG) > 0) {}
 } }
 #define CHECK(value) do { Checks++; if (!(value)) { fprintf(stderr,"Session check failed at line %d: %s\n",__LINE__,#value); exit(1); } } while(0)
+@interface RefusingWorkerStore : PRTunStore
+@end
+@implementation RefusingWorkerStore
+- (BOOL)record:(const struct PRWorkerIdentity *)identity session:(NSString *)session worker:(BOOL)worker error:(NSError **)error {
+    if (worker) { if (error) *error = PRTunError(@"Injected durable worker-record refusal"); return NO; }
+    return [super record:identity session:session worker:worker error:error];
+}
+@end
 static PRTunSession *Start(PRTunStore *store, NSString *engine, NSString *worker, char mode) {
     NSError *error = nil;
     PRTunSession *session = [[PRTunSession alloc] initWithStore:store user:geteuid() engine:engine worker:worker
@@ -36,8 +44,17 @@ int main(int argc, const char **argv) { @autoreleasepool {
     CHECK(mkdtemp(root));
     int directory = open(root,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
     PRTunStore *store = [[PRTunStore alloc] initWithDirectoryDescriptor:directory error:NULL];
-    close(directory); CHECK(store);
+    CHECK(store);
     EmergencyStore = store; atexit(CleanupFixtures);
+    PRTunStore *refusing = [[RefusingWorkerStore alloc] initWithDirectoryDescriptor:directory error:NULL];
+    close(directory); CHECK(refusing);
+    NSError *refused = nil;
+    PRTunSession *refusedSession = [[PRTunSession alloc] initWithStore:refusing user:geteuid() engine:engine worker:worker
+        configuration:[@"N" dataUsingEncoding:NSUTF8StringEncoding] engineRequirement:@"identifier \"app.perroute.session-engine\""
+        workerRequirement:@"identifier \"app.perroute.session-worker\"" error:&refused];
+    CHECK(!refusedSession && refused);
+    CHECK([store sessions:NULL].count == 0);
+    CHECK(waitpid(-1,NULL,WNOHANG) == -1 && errno == ECHILD);
     PRTunSession *session = Start(store,engine,worker,'N');
     CHECK([session poll:NULL]);
     CHECK([session stop:NULL]);

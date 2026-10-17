@@ -19,8 +19,11 @@ static int StartWorker(NSString *path, NSString *session, int socket, pid_t *pid
     if (code) return code;
     code = posix_spawn_file_actions_init(&actions);
     if (code) { posix_spawnattr_destroy(&attributes); return code; }
-    int null = open("/dev/null",O_RDWR|O_CLOEXEC);
-    if (null < 0) code = errno;
+    int opened = open("/dev/null",O_RDWR|O_CLOEXEC);
+    int null = opened >= 0 ? fcntl(opened,F_DUPFD_CLOEXEC,4) : -1;
+    int descriptorError = errno;
+    if (opened >= 0) close(opened);
+    if (null < 0) code = descriptorError;
     if (!code) code = posix_spawn_file_actions_adddup2(&actions,socket,3);
     for (int fd = 0; fd < 3 && !code; fd++) code = posix_spawn_file_actions_adddup2(&actions,null,fd);
     sigset_t mask, defaults;
@@ -134,6 +137,21 @@ static int StartWorker(NSString *path, NSString *session, int socket, pid_t *pid
         if (waited == _workerPID || (waited < 0 && errno == ECHILD)) { _workerPID = 0; break; }
         if (waited < 0 && errno != EINTR) break;
         usleep(25000);
+    }
+    if (_workerPID > 0) {
+        // A failed pre-activation path/record check may leave our worker suspended.
+        // waitpid==0 proves it remains our unreaped child, without relying on a
+        // path lookup or a PID that could already have been reused.
+        pid_t waited = waitpid(_workerPID,NULL,WNOHANG);
+        if (!waited) {
+            if (kill(_workerPID,SIGKILL) && errno != ESRCH) return Failed(error,@"Cannot terminate owned TUN worker");
+            for (int i = 0; i < 80; i++) {
+                waited = waitpid(_workerPID,NULL,WNOHANG);
+                if (waited != 0 && !(waited < 0 && errno == EINTR)) break;
+                usleep(25000);
+            }
+        }
+        if (waited == _workerPID || (waited < 0 && errno == ECHILD)) _workerPID = 0;
     }
     if (_identifier && ![_store cleanup:_identifier error:error]) return NO;
     if (_workerPID > 0) {
