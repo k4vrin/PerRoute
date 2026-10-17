@@ -176,7 +176,7 @@ static NSDictionary *Apply(NSDictionary *request, uid_t uid, NSXPCConnection *co
                 NSDictionary *lease = [Journal load:&error];
                 // A journal surviving helper restart represents recovery intent, not a live client lease.
                 BOOL owned = lease && LeaseConnection == connection && [lease[@"uid"] unsignedIntValue] == self.uid;
-                result = @{@"pending": @(lease != nil), @"owned": @(owned)};
+                result = PRSessionStatus(lease != nil, owned);
             } else if ([operation isEqual:@"retire"] && request.count == 2) {
                 result = Restore(self.uid, &error);
                 if (result && !error) {

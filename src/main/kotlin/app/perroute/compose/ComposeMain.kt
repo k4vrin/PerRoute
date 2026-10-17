@@ -412,7 +412,7 @@ internal class Shell(
 
 /** Entry point: single-instance check, state loading, then the main window, the tray icon and the Quick Access panel. */
 fun main(args: Array<String>) {
-    if (args.firstOrNull() in setOf("--proxy-helper-status", "--proxy-helper-unregister")) {
+    if (args.firstOrNull() in setOf("--proxy-helper-status", "--proxy-helper-setup", "--proxy-helper-unregister", "--proxy-helper-unregister-interactive")) {
         if (args.size != 1) kotlin.system.exitProcess(64)
         kotlin.system.exitProcess(app.perroute.platform.macos.proxy.MacHelperMaintenance.run(args[0]))
     }

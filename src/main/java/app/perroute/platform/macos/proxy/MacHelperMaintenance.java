@@ -23,10 +23,13 @@ public final class MacHelperMaintenance {
                 throw new IOException("This installation does not use the managed proxy helper");
             if (operation.equals("--proxy-helper-status")) {
                 System.out.println(Json.stringify(client.request("service-status", Map.of())));
-            } else if (operation.equals("--proxy-helper-unregister")) {
+            } else if (operation.equals("--proxy-helper-setup")) {
+                client.request("prepare", Map.of());
+                System.out.println(Json.stringify(client.request("service-status", Map.of())));
+            } else if ((operation.equals("--proxy-helper-unregister") || operation.equals("--proxy-helper-unregister-interactive"))) {
                 // The durable-state lock prevents maintenance racing a running desktop. Opening is
-                // noninteractive and fails without changing encrypted data when the key is unavailable.
-                try (var session = MacStateSession.openDefault(false)) {
+                // noninteractive by default; the explicit laptop-only flag may ask for Keychain access.
+                try (var session = MacStateSession.openDefault(operation.equals("--proxy-helper-unregister-interactive"))) {
                     if (!(session.systemProxy() instanceof HelperSystemProxyLifecycle))
                         throw new IOException("Reopen the original managed installation to recover its proxy settings");
                     unregister(session.systemProxy(), client);

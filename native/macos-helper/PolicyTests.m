@@ -9,6 +9,17 @@ static NSUInteger Checks;
 static void Check(BOOL passed, NSString *message) { Checks++; if (!passed) { fprintf(stderr, "FAIL: %s\n", message.UTF8String); exit(1); } }
 int main(void) {
     @autoreleasepool {
+#ifdef PR_LOCAL_CERT_SHA1
+        Check(PRRequirement(PRAppIdentifier, @"local") != nil, @"local application certificate requirement");
+        Check(PRRequirement(PRHelperLabel, @"local") != nil, @"local helper certificate requirement");
+        Check(PRRequirement(@"app.perroute.proxy-installer", @"local") != nil, @"local installer certificate requirement");
+        Check(PRRequirement(@"other.application", @"local") == nil, @"foreign identifiers refused");
+        Check(PRRequirement(PRAppIdentifier, @"caller-provided") == nil, @"caller identity substitution refused");
+        Check(PRSigningTeam() == nil, @"ad-hoc test executable cannot select managed mode");
+#endif
+        Check(CFGetTypeID((__bridge CFTypeRef)PRSessionStatus(NO, NO)[@"pending"]) == CFBooleanGetTypeID(), @"idle pending serializes as boolean");
+        Check(CFGetTypeID((__bridge CFTypeRef)PRSessionStatus(YES, YES)[@"pending"]) == CFBooleanGetTypeID(), @"live pending serializes as boolean");
+        Check(CFGetTypeID((__bridge CFTypeRef)PRSessionStatus(YES, YES)[@"owned"]) == CFBooleanGetTypeID(), @"custody serializes as boolean");
         NSDictionary *original = @{@"ExceptionsList": @[@"localhost", @"*.local"], @"ExcludeSimpleHostnames": @1, @"FTPPassive": @1};
         NSError *error = nil;
         NSDictionary *applied = PRApplySettings(original, 17891, 17890, &error);

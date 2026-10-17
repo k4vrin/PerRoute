@@ -480,3 +480,11 @@ tasks.register<Exec>("packageMacosPreview") {
         layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app").get().asFile.absolutePath,
         "--output", layout.buildDirectory.dir("macos-preview").get().asFile.absolutePath)
 }
+
+// Explicit local signing uses the persistent developer identity; this task never installs a daemon.
+tasks.register<Exec>("stageMacosLocalHelper") {
+    dependsOn(tasks.named("createDistributable"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine("python3", "scripts/macos_local_helper.py", "--app",
+        layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app").get().asFile.absolutePath)
+}

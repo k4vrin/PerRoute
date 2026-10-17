@@ -1,5 +1,6 @@
 #import "ProxyHelper.h"
 #import <Security/Security.h>
+#import <unistd.h>
 
 NSError *PRError(NSString *message) {
     return [NSError errorWithDomain:@"app.perroute.proxy-helper" code:1 userInfo:@{NSLocalizedDescriptionKey: message}];
@@ -13,7 +14,22 @@ NSXPCInterface *PRHelperInterface(void) {
     return interface;
 }
 
+BOOL PRSignedSelf(NSString *identifier) {
+    SecCodeRef code = NULL;
+    SecRequirementRef requirement = NULL;
+    NSString *identity = PRRequirement(identifier, @"local");
+    BOOL ok = identity && SecRequirementCreateWithString((__bridge CFStringRef)identity, kSecCSDefaultFlags, &requirement) == errSecSuccess &&
+        SecCodeCopySelf(kSecCSDefaultFlags, &code) == errSecSuccess &&
+        SecCodeCheckValidity(code, kSecCSStrictValidate, requirement) == errSecSuccess;
+    if (code) CFRelease(code);
+    if (requirement) CFRelease(requirement);
+    return ok;
+}
+
 NSString *PRSigningTeam(void) {
+#ifdef PR_LOCAL_CERT_SHA1
+    return PRSignedSelf(PRAppIdentifier) || PRSignedSelf(PRHelperLabel) ? @"local" : nil;
+#else
     SecCodeRef code = NULL;
     CFDictionaryRef info = NULL;
     NSString *team = nil;
@@ -26,11 +42,26 @@ NSString *PRSigningTeam(void) {
     if (info) CFRelease(info);
     if (code) CFRelease(code);
     return team;
+#endif
 }
 
 NSString *PRRequirement(NSString *identifier, NSString *team) {
+#ifdef PR_LOCAL_CERT_SHA1
+    // Local builds pin the persistent signing certificate at compile time. No request may choose it.
+    NSString *pin = @PR_LOCAL_CERT_SHA1;
+    if (pin.length != 40 || [pin rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location != NSNotFound ||
+        ![team isEqual:@"local"] || (![identifier isEqual:PRAppIdentifier] && ![identifier isEqual:PRHelperLabel] && ![identifier isEqual:@"app.perroute.proxy-installer"])) return nil;
+    return [NSString stringWithFormat:@"identifier \"%@\" and certificate leaf = H\"%@\"", identifier, pin];
+#else
     // Never substitute ad-hoc identities or a caller-supplied requirement for this trust boundary.
     return [NSString stringWithFormat:@"anchor apple generic and identifier \"%@\" and certificate leaf[subject.OU] = \"%@\"", identifier, team];
+#endif
+}
+
+NSDictionary *PRSessionStatus(BOOL pending, BOOL owned) {
+    // Java deliberately requires JSON booleans, not numeric 0/1 boxed from a C comparison.
+    return @{@"pending": pending ? @YES : @NO, @"owned": owned ? @YES : @NO,
+             @"euid": @(geteuid()), @"pid": @(getpid())};
 }
 
 static BOOL Flag(NSDictionary *d, NSString *key) {
