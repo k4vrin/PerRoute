@@ -2,6 +2,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <libproc.h>
+#include <sys/proc_info.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdbool.h>
@@ -50,10 +52,10 @@ static bool Reap(pid_t child, int *status) {
     return false;
 }
 
-int PRRunEngineWorker(const char *engine, const char *configuration, int control) {
+int PRRunEngineWorker(const char *engine, const char *configuration, int control, PRWorkerRecord record, void *context) {
     int socket_type = 0;
     socklen_t type_length = sizeof(socket_type);
-    if (!engine || engine[0] != '/' || !configuration || configuration[0] != '/' || control < 3 ||
+    if (!record || !engine || engine[0] != '/' || !configuration || configuration[0] != '/' || control < 3 ||
         getsockopt(control, SOL_SOCKET, SO_TYPE, &socket_type, &type_length) || socket_type != SOCK_STREAM ||
         !Regular(engine, 200 * 1024 * 1024, true) || !Regular(configuration, 1024 * 1024, false)) return 78;
     int null_device = open("/dev/null", O_RDWR | O_CLOEXEC);
@@ -73,7 +75,7 @@ int PRRunEngineWorker(const char *engine, const char *configuration, int control
     if (!code) code = posix_spawnattr_setsigdefault(&attributes, &defaults);
     if (!code) code = posix_spawnattr_setpgroup(&attributes, 0);
     if (!code) code = posix_spawnattr_setflags(&attributes,
-        POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT);
+        POSIX_SPAWN_START_SUSPENDED | POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT);
     char *arguments[] = {(char *)engine, "run", "-c", (char *)configuration, NULL};
     char *environment[] = {"PATH=/usr/bin:/bin", "HOME=/var/empty", "TMPDIR=/private/tmp", NULL};
     pid_t child = 0;
@@ -83,6 +85,34 @@ int PRRunEngineWorker(const char *engine, const char *configuration, int control
     close(null_device);
     if (code) { Event(control, PR_WORKER_STOPPED, PR_WORKER_FAILURE, 0, code); return 79; }
     int status = 0, reason = PR_WORKER_FAILURE;
+    struct proc_bsdinfo info = {0};
+    struct PRWorkerIdentity identity = {.pid = child};
+    bool observed = proc_pidinfo(child, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) == sizeof(info) &&
+        info.pbi_pid == (unsigned)child && info.pbi_uid == geteuid() && info.pbi_start_tvsec > 0;
+    if (observed) { identity.start_seconds = info.pbi_start_tvsec; identity.start_microseconds = info.pbi_start_tvusec; }
+    if (!observed || record(&identity, context)) {
+        bool stopped = Reap(child, &status);
+        Event(control, PR_WORKER_STOPPED, PR_WORKER_FAILURE, child, status);
+        return stopped ? 79 : 80;
+    }
+    struct pollfd owner = {.fd = control, .events = POLLIN};
+    int ready = poll(&owner, 1, 0);
+    if (ready != 0) {
+        reason = PR_WORKER_OWNER_LOST;
+        if (ready > 0 && (owner.revents & POLLIN) && !(owner.revents & POLLHUP)) {
+            char command[2];
+            ssize_t count = recv(control, command, sizeof(command), MSG_DONTWAIT);
+            reason = count == 1 && command[0] == 'S' ? PR_WORKER_STOP : count == 0 ? PR_WORKER_OWNER_LOST : PR_WORKER_BAD_CONTROL;
+        }
+        bool stopped = Reap(child, &status);
+        Event(control, PR_WORKER_STOPPED, reason, child, status);
+        return !stopped ? 80 : reason == PR_WORKER_STOP || reason == PR_WORKER_OWNER_LOST ? 0 : 79;
+    }
+    if (kill(child, SIGCONT)) {
+        bool stopped = Reap(child, &status);
+        Event(control, PR_WORKER_STOPPED, PR_WORKER_FAILURE, child, status);
+        return stopped ? 79 : 80;
+    }
     bool reaped = false;
     if (Event(control, PR_WORKER_RUNNING, 0, child, 0)) {
         for (;;) {

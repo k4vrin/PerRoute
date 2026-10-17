@@ -50,6 +50,24 @@ static void Wait(pid_t worker, int expected) {
     waitpid(worker, &status, 0);
     Check(0, "worker deadline exceeded");
 }
+struct RecordContext { const char *configuration; int refuse; int delay; };
+static int Record(const struct PRWorkerIdentity *identity, void *opaque) {
+    struct RecordContext *context = opaque;
+    int config = open(context->configuration, O_RDONLY);
+    char bytes[2];
+    ssize_t count = config >= 0 ? read(config, bytes, sizeof(bytes)) : -1;
+    if (config >= 0) close(config);
+    if (count != 1 || !identity->start_seconds || identity->pid <= 0) return 1;
+    if (context->delay) usleep(100000);
+    if (context->refuse) return 1;
+    char path[300];
+    snprintf(path, sizeof(path), "%s.owner", context->configuration);
+    int file = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (file < 0) return 1;
+    int failed = write(file, identity, sizeof(*identity)) != sizeof(*identity) || fsync(file);
+    if (close(file)) failed = 1;
+    return failed;
+}
 static void Lifecycle(const char *engine, const char *config, char mode, int action) {
     int file = open(config, O_WRONLY | O_TRUNC);
     Check(file >= 0 && write(file, &mode, 1) == 1 && !close(file), "owned configuration");
@@ -57,11 +75,17 @@ static void Lifecycle(const char *engine, const char *config, char mode, int act
     Check(!socketpair(AF_UNIX, SOCK_STREAM, 0, pair), "private control pair");
     pid_t worker = fork();
     Check(worker >= 0, "worker fork");
-    if (!worker) { close(pair[0]); int result = PRRunEngineWorker(engine, config, pair[1]); close(pair[1]); _exit(result); }
+    if (!worker) { close(pair[0]); struct RecordContext context = {.configuration = config}; int result = PRRunEngineWorker(engine, config, pair[1], Record, &context); close(pair[1]); _exit(result); }
     close(pair[1]);
     struct PRWorkerEvent event = Receive(pair[0]);
     Check(event.state == PR_WORKER_RUNNING && event.pid > 0, "spawn event, not readiness");
     pid_t engine_pid = event.pid;
+    char record_path[300];
+    snprintf(record_path, sizeof(record_path), "%s.owner", config);
+    int record = open(record_path, O_RDONLY);
+    struct PRWorkerIdentity identity = {0};
+    Check(record >= 0 && read(record, &identity, sizeof(identity)) == sizeof(identity) && !close(record) &&
+        identity.pid == engine_pid && identity.start_seconds > 0, "kernel child identity recorded before activation");
     if (mode != 'E') {
         int ready = 0;
         struct timespec pause = {.tv_sec = 0, .tv_nsec = 25000000};
@@ -90,6 +114,31 @@ static void Lifecycle(const char *engine, const char *config, char mode, int act
     errno = 0;
     Check(kill(engine_pid, 0) < 0 && errno == ESRCH, "owned engine no longer exists");
 }
+static void StartupGate(const char *engine, const char *config, int refuse) {
+    int file = open(config, O_WRONLY | O_TRUNC);
+    Check(file >= 0 && write(file, "N", 1) == 1 && !close(file), "startup gate config");
+    int pair[2];
+    Check(!socketpair(AF_UNIX, SOCK_STREAM, 0, pair), "startup owner socket");
+    pid_t worker = fork();
+    Check(worker >= 0, "startup worker fork");
+    if (!worker) {
+        close(pair[0]);
+        struct RecordContext context = {.configuration = config, .refuse = refuse, .delay = !refuse};
+        int result = PRRunEngineWorker(engine, config, pair[1], Record, &context);
+        close(pair[1]); _exit(result);
+    }
+    close(pair[1]);
+    if (refuse) {
+        struct PRWorkerEvent event = Receive(pair[0]);
+        Check(event.state == PR_WORKER_STOPPED && event.reason == PR_WORKER_FAILURE, "record failure prevents RUNNING");
+        close(pair[0]); Wait(worker, 79);
+        errno = 0;
+        Check(kill(event.pid, 0) < 0 && errno == ESRCH, "unrecorded suspended engine reaped");
+    } else { close(pair[0]); Wait(worker, 0); }
+    file = open(config, O_RDONLY);
+    char bytes[2];
+    Check(file >= 0 && read(file, bytes, sizeof(bytes)) == 1 && !close(file), "no engine activation before recovery/owner gate");
+}
 int main(int argc, char **argv) {
     Check(argc == 2 && argv[1][0] == '/', "fixed fixture executable argument");
     Check(!setenv("PERROUTE_WORKER_SECRET", "must-not-reach-child", 1), "parent environment sentinel");
@@ -106,23 +155,29 @@ int main(int argc, char **argv) {
     Lifecycle(argv[1], config, 'N', 2);
     Lifecycle(argv[1], config, 'E', 3);
     Lifecycle(argv[1], config, 'N', 4);
+    StartupGate(argv[1], config, 1);
+    StartupGate(argv[1], config, 0);
     int pair[2];
     Check(!socketpair(AF_UNIX, SOCK_STREAM, 0, pair), "refusal fixture socket");
-    Check(PRRunEngineWorker("relative", config, pair[1]) == 78, "relative engine refused");
-    Check(PRRunEngineWorker(argv[1], "relative", pair[1]) == 78, "relative config refused");
-    Check(PRRunEngineWorker(argv[1], config, 0) == 78, "standard input not an owner control socket");
+    Check(PRRunEngineWorker(argv[1], config, pair[1], NULL, NULL) == 78, "missing recovery recorder refused");
+    Check(PRRunEngineWorker("relative", config, pair[1], Record, NULL) == 78, "relative engine refused");
+    Check(PRRunEngineWorker(argv[1], "relative", pair[1], Record, NULL) == 78, "relative config refused");
+    Check(PRRunEngineWorker(argv[1], config, 0, Record, NULL) == 78, "standard input not an owner control socket");
     Check(!chmod(config, 0666), "unsafe config fixture permissions");
-    Check(PRRunEngineWorker(argv[1], config, pair[1]) == 78, "writable config refused");
+    Check(PRRunEngineWorker(argv[1], config, pair[1], Record, NULL) == 78, "writable config refused");
     Check(!chmod(config, 0600), "safe config permissions restored");
     char link[256];
     snprintf(link, sizeof(link), "%s/link", directory);
     Check(!symlink(config, link), "symlink config fixture");
-    Check(PRRunEngineWorker(argv[1], link, pair[1]) == 78, "symlink config refused");
+    Check(PRRunEngineWorker(argv[1], link, pair[1], Record, NULL) == 78, "symlink config refused");
     Check(!unlink(link), "symlink removed");
     file = open(config, O_WRONLY | O_TRUNC);
     Check(file >= 0 && !close(file), "empty configuration fixture");
-    Check(PRRunEngineWorker(argv[1], config, pair[1]) == 78, "empty config refused");
+    Check(PRRunEngineWorker(argv[1], config, pair[1], Record, NULL) == 78, "empty config refused");
     close(pair[0]); close(pair[1]);
+    char owner_path[300];
+    snprintf(owner_path, sizeof(owner_path), "%s.owner", config);
+    Check(!unlink(owner_path), "recorded child identity removed");
     Check(!unlink(config) && !rmdir(directory), "owned test staging removed");
     printf("macOS engine worker: %d assertions passed; no TUN or host network changes\n", checks);
     return 0;
