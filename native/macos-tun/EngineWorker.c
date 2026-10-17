@@ -98,7 +98,7 @@ int PRRunEngineWorker(const char *engine, const char *configuration, int control
     struct pollfd owner = {.fd = control, .events = POLLIN};
     int ready = poll(&owner, 1, 0);
     if (ready != 0) {
-        reason = PR_WORKER_OWNER_LOST;
+        reason = ready < 0 ? PR_WORKER_FAILURE : PR_WORKER_OWNER_LOST;
         if (ready > 0 && (owner.revents & POLLIN) && !(owner.revents & POLLHUP)) {
             char command[2];
             ssize_t count = recv(control, command, sizeof(command), MSG_DONTWAIT);

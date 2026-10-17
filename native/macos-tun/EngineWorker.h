@@ -3,6 +3,7 @@
 #include <sys/types.h>
 #include <stdint.h>
 
+// Run only in an isolated worker process, never on the helper XPC queue.
 // Internal native API, never an IPC request. The caller must authenticate the session
 // and verify/stage the fixed engine and config before entering its isolated worker.
 // The calling worker owns and closes control after this function returns. EOF, STOP
