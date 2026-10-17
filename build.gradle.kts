@@ -542,3 +542,35 @@ tasks.register<Exec>("proveMacosProcessRouting") {
 tasks.register<Exec>("runMacosProcessProofGuardTests") {
     commandLine("python3", "scripts/test_macos_process_proof.py")
 }
+
+val tunPolicyFixture = layout.buildDirectory.file("macos-tun/policy-fixture.json")
+val runMacosTunPreparationTests = tasks.register<JavaExec>("runMacosTunPreparationTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.MacosTunPreparationTests")
+    args(tunPolicyFixture.get().asFile.absolutePath)
+    enableAssertions = true
+}
+val compileMacosTunPolicyTests = tasks.register<Exec>("compileMacosTunPolicyTests") {
+    inputs.files("native/macos-tun/TunPolicy.h", "native/macos-tun/TunPolicy.m", "native/macos-tun/PolicyTests.m")
+    outputs.file(layout.buildDirectory.file("macos-tun/policy-tests"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { layout.buildDirectory.dir("macos-tun").get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-Wall", "-Wextra", "-Werror", "-fobjc-arc", "-mmacosx-version-min=13.0",
+        "-framework", "Foundation", "native/macos-tun/TunPolicy.m", "native/macos-tun/PolicyTests.m", "-o",
+        layout.buildDirectory.file("macos-tun/policy-tests").get().asFile.absolutePath)
+}
+tasks.register<Exec>("runMacosTunPolicyTests") {
+    dependsOn(runMacosTunPreparationTests, compileMacosTunPolicyTests)
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(layout.buildDirectory.file("macos-tun/policy-tests").get().asFile.absolutePath,
+        tunPolicyFixture.get().asFile.absolutePath,
+        layout.buildDirectory.file("macos-tun/native-candidate.json").get().asFile.absolutePath)
+}
+
+tasks.register<Exec>("checkMacosTunPolicyCandidate") {
+    dependsOn(tasks.named("runMacosTunPolicyTests"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine("python3", "scripts/verify_macos_per_app.py", "--config",
+        layout.buildDirectory.file("macos-tun/native-candidate.json").get().asFile.absolutePath)
+}
