@@ -502,3 +502,41 @@ tasks.register<Exec>("checkMacosPerAppRoutingCandidate") {
     commandLine("python3", "scripts/verify_macos_per_app.py", "--config",
         layout.buildDirectory.file("macos-per-app-routing/candidate.json").get().asFile.absolutePath)
 }
+
+val buildMacosProcessRoutingClient = tasks.register<Exec>("buildMacosProcessRoutingClient") {
+    inputs.file("native/macos-routing-proof/Client.c")
+    outputs.file(layout.buildDirectory.file("macos-per-app-routing/Client"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { layout.buildDirectory.dir("macos-per-app-routing").get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=13.0",
+        "native/macos-routing-proof/Client.c", "-o",
+        layout.buildDirectory.file("macos-per-app-routing/Client").get().asFile.absolutePath)
+}
+
+val buildMacosOwnedSocketProbe = tasks.register<Exec>("buildMacosOwnedSocketProbe") {
+    inputs.file("native/macos-routing-proof/OwnerProbe.c")
+    outputs.file(layout.buildDirectory.file("macos-per-app-routing/OwnerProbe"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { layout.buildDirectory.dir("macos-per-app-routing").get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-Wall", "-Wextra", "-Werror", "-mmacosx-version-min=13.0",
+        "native/macos-routing-proof/OwnerProbe.c", "-o",
+        layout.buildDirectory.file("macos-per-app-routing/OwnerProbe").get().asFile.absolutePath)
+}
+
+tasks.register<Exec>("proveMacosProcessRouting") {
+    dependsOn(tasks.named("testClasses"), buildMacosProcessRoutingClient, buildMacosOwnedSocketProbe)
+    // Deliberately opt-in and separate from normal builds and the installed application's ports.
+    doFirst {
+        check(System.getProperty("os.name") == "Mac OS X") { "Native process routing proof requires macOS" }
+        commandLine("python3", "scripts/prove_macos_process_routing.py", "--java",
+            javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) }.get().executablePath.asFile.absolutePath,
+            "--classpath", sourceSets["test"].runtimeClasspath.asPath, "--client",
+            layout.buildDirectory.file("macos-per-app-routing/Client").get().asFile.absolutePath,
+            "--probe", layout.buildDirectory.file("macos-per-app-routing/OwnerProbe").get().asFile.absolutePath)
+        if (providers.gradleProperty("nativeAttributionOnly").map { it.toBoolean() }.getOrElse(false)) args("--native-only")
+    }
+}
+
+tasks.register<Exec>("runMacosProcessProofGuardTests") {
+    commandLine("python3", "scripts/test_macos_process_proof.py")
+}

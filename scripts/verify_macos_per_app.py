@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check a generated per-app candidate with a pinned standalone engine. Never run a TUN."""
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
@@ -51,18 +52,13 @@ def fetch(path, architecture):
             temporary.unlink(missing_ok=True)
 
 
-def check(config):
+@contextmanager
+def verified_engine():
     if platform.system() != 'Darwin':
         raise ValueError('Native engine validation requires macOS; portable Java tests run separately')
     architecture = {'arm64': 'arm64', 'x86_64': 'amd64'}.get(platform.machine())
     if architecture is None:
         raise ValueError('Unsupported validation architecture')
-    if config.stat().st_size > 1024 * 1024:
-        raise ValueError('Oversized candidate')
-    candidate = json.loads(config.read_text())
-    inbounds = candidate.get('inbounds', [])
-    if len(inbounds) != 1 or inbounds[0].get('type') != 'tun' or inbounds[0].get('auto_route') is not False:
-        raise ValueError('Expected the offline candidate with automatic host routes disabled')
     cache = ROOT / 'build/macos-per-app-routing'
     cache.mkdir(parents=True, exist_ok=True)
     archive = cache / f'sing-box-{VERSION}-darwin-{architecture}.tar.gz'
@@ -88,8 +84,19 @@ def check(config):
         if not found:
             raise ValueError('Official archive is missing its engine')
         executable.chmod(0o500)
-        # Only the parser/checker runs as the ordinary user. There is no 'run', sudo, interface,
-        # route, DNS or service command in this tool, and the binary never enters the app bundle.
+        yield executable, architecture
+
+
+def check(config):
+    if config.stat().st_size > 1024 * 1024:
+        raise ValueError('Oversized candidate')
+    candidate = json.loads(config.read_text())
+    inbounds = candidate.get('inbounds', [])
+    if len(inbounds) != 1 or inbounds[0].get('type') != 'tun' or inbounds[0].get('auto_route') is not False:
+        raise ValueError('Expected the offline candidate with automatic host routes disabled')
+    with verified_engine() as (executable, architecture):
+        # Only the parser/checker runs here. The separate opt-in process proof uses a loopback
+        # listener; neither tool installs this engine or adds it to the normal app package.
         subprocess.run([str(executable), 'version'], check=True, timeout=15)
         subprocess.run([str(executable), 'check', '-c', str(config.resolve())], check=True, timeout=30)
     print(f'Pinned sing-box {VERSION} {architecture}: candidate accepted; no TUN or host setting changed')
