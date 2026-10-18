@@ -109,3 +109,14 @@ NSData *PRTunActiveConfiguration(NSData *request, NSArray<NSString *> *trustedEn
     for (NSUInteger i=1;i<rules.count;i++) rules[i][@"user_id"] = @[@(user)];
     return [NSJSONSerialization dataWithJSONObject:configuration options:NSJSONWritingSortedKeys error:error];
 }
+
+NSSet<NSNumber *> *PRTunUpstreamPorts(id values, NSSet<NSNumber *> *gatewayPorts, NSError **error) {
+    if (![values isKindOfClass:NSArray.class] || !gatewayPorts.count || gatewayPorts.count > 256 ||
+        [values count] != gatewayPorts.count) return Reject(error);
+    NSMutableSet *upstream = [NSMutableSet set];
+    for (id port in values) {
+        if (!Integer(port,1,65535) || [upstream containsObject:port] || [gatewayPorts containsObject:port]) return Reject(error);
+        [upstream addObject:port];
+    }
+    return [upstream copy];
+}

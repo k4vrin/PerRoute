@@ -33,8 +33,8 @@ public final class MacTunSessionClient {
         this.clock = Objects.requireNonNull(clock);
         this.sleeper = Objects.requireNonNull(sleeper);
     }
-    public synchronized void start(List<ExecutableRoute> selected, long corePid) throws Exception {
-        var request = new MacTunStartRequest(selected, corePid);
+    public synchronized void start(List<ExecutableRoute> selected, long corePid, List<Integer> upstreamPorts) throws Exception {
+        var request = new MacTunStartRequest(selected, corePid, upstreamPorts);
         interrupted();
         client.request("prepare", Map.of());
         interrupted();
@@ -61,6 +61,7 @@ public final class MacTunSessionClient {
     public synchronized boolean available() throws IOException {
         var state = client.request("tun-capabilities", Map.of());
         return state.get("protocol") instanceof Number version && version.doubleValue() == 1.0 &&
+                state.get("endpointProtocol") instanceof Number endpoints && endpoints.doubleValue() == 2.0 &&
                 state.get("euid") instanceof Number user && user.doubleValue() == 0.0 &&
                 Boolean.TRUE.equals(state.get("payloadAvailable"));
     }

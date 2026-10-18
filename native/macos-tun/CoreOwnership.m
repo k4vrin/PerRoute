@@ -6,7 +6,7 @@
 #import <sys/proc_info.h>
 
 static id Reject(NSError **error) {
-    if (error) *error = PRTunError(@"The expected signed Xray process no longer owns every loopback endpoint");
+    if (error) *error = PRTunError(@"The expected signed routing process no longer owns every loopback endpoint");
     return nil;
 }
 static NSDictionary *Identity(pid_t pid, uid_t user, NSArray *paths) {
@@ -50,10 +50,18 @@ NSDictionary *PRTunObserveCore(pid_t pid, uid_t user, NSArray<NSString *> *allow
         if (descriptors[i].proc_fdtype != PROX_FDTYPE_SOCKET) continue;
         struct socket_fdinfo socket = {0};
         if (proc_pidfdinfo(pid,descriptors[i].proc_fd,PROC_PIDFDSOCKETINFO,&socket,sizeof(socket)) != sizeof(socket)) continue;
-        if (socket.psi.soi_kind != SOCKINFO_TCP || socket.psi.soi_family != AF_INET ||
-            socket.psi.soi_proto.pri_tcp.tcpsi_state != TSI_S_LISTEN) continue;
+        if (socket.psi.soi_kind != SOCKINFO_TCP || socket.psi.soi_proto.pri_tcp.tcpsi_state != TSI_S_LISTEN) continue;
         struct in_sockinfo *listener = &socket.psi.soi_proto.pri_tcp.tcpsi_ini;
-        if (!(listener->insi_vflag & INI_IPV4) || listener->insi_laddr.ina_46.i46a_addr4.s_addr != htonl(INADDR_LOOPBACK)) continue;
+        // Darwin may report an AF_INET6 socket with INI_IPV4 and the IPv4 union
+        // address for a mapped bind. The address flags select the union member.
+        // Accept only 127.0.0.1, never ::1, wildcard or other loopback addresses.
+        const struct in6_addr *v6 = &listener->insi_laddr.ina_6;
+        BOOL v4 = (socket.psi.soi_family == AF_INET || socket.psi.soi_family == AF_INET6) &&
+            (listener->insi_vflag & INI_IPV4) &&
+            listener->insi_laddr.ina_46.i46a_addr4.s_addr == htonl(INADDR_LOOPBACK);
+        BOOL mapped = socket.psi.soi_family == AF_INET6 && (listener->insi_vflag & INI_IPV6) && IN6_IS_ADDR_V4MAPPED(v6) &&
+            v6->s6_addr[12] == 127 && v6->s6_addr[13] == 0 && v6->s6_addr[14] == 0 && v6->s6_addr[15] == 1;
+        if (!v4 && !mapped) continue;
         [observed addObject:@(ntohs((uint16_t)listener->insi_lport))];
     }
     free(descriptors);
@@ -70,4 +78,25 @@ BOOL PRTunCoreStillOwned(NSDictionary *identity, NSString *requirement, NSError 
     if (!observed) return NO;
     if (![observed isEqual:identity]) { Reject(error); return NO; }
     return YES;
+}
+
+NSDictionary *PRTunObserveForwardingChain(pid_t gatewayPid, pid_t corePid, uid_t user,
+    NSArray<NSString *> *gatewayPaths, NSArray<NSString *> *corePaths,
+    NSString *gatewayRequirement, NSString *coreRequirement,
+    NSSet<NSNumber *> *gatewayPorts, NSSet<NSNumber *> *upstreamPorts, NSError **error) {
+    if (gatewayPid == corePid || gatewayPorts.count != upstreamPorts.count ||
+        [gatewayPorts intersectsSet:upstreamPorts]) return Reject(error);
+    NSDictionary *gateway = PRTunObserveCore(gatewayPid,user,gatewayPaths,gatewayRequirement,gatewayPorts,error);
+    if (!gateway) return nil;
+    NSDictionary *core = PRTunObserveCore(corePid,user,corePaths,coreRequirement,upstreamPorts,error);
+    if (!core) return nil;
+    NSDictionary *chain = @{@"gateway":gateway,@"core":core};
+    return PRTunForwardingStillOwned(chain,gatewayRequirement,coreRequirement,error) ? chain : nil;
+}
+BOOL PRTunForwardingStillOwned(NSDictionary *chain, NSString *gatewayRequirement,
+    NSString *coreRequirement, NSError **error) {
+    if (![chain isKindOfClass:NSDictionary.class]) return Reject(error) != nil;
+    return PRTunCoreStillOwned(chain[@"gateway"],gatewayRequirement,error) &&
+        PRTunCoreStillOwned(chain[@"core"],coreRequirement,error) &&
+        PRTunCoreStillOwned(chain[@"gateway"],gatewayRequirement,error);
 }

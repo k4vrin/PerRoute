@@ -7,3 +7,6 @@ NSData *PRTunPrepareConfiguration(NSData *request, NSArray<NSString *> *trustedE
 // Native authenticated caller only, after payload, endpoint and conflict validation.
 // This compiler still performs no I/O; only its caller can stage and activate it.
 NSData *PRTunActiveConfiguration(NSData *request, NSArray<NSString *> *trustedEngineExecutables, uid_t user, NSError **error);
+
+// Bounded distinct Xray listeners, separate from every authenticated JVM gateway port.
+NSSet<NSNumber *> *PRTunUpstreamPorts(id values, NSSet<NSNumber *> *gatewayPorts, NSError **error);

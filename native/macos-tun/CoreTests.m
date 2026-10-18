@@ -20,7 +20,7 @@ static NSTask *Start(NSString *fixture, NSString *mode, NSSet **ports) {
 }
 int main(int argc, const char **argv) { @autoreleasepool {
     Tasks = [NSMutableArray array]; atexit(Cleanup);
-    CHECK(argc == 2 && geteuid() != 0);
+    CHECK(argc == 3 && geteuid() != 0);
     NSString *fixture = [NSString stringWithUTF8String:argv[1]];
     NSString *requirement = @"identifier \"app.perroute.core-fixture\"";
     NSSet *ports;
@@ -36,11 +36,38 @@ int main(int argc, const char **argv) { @autoreleasepool {
     CHECK(!PRTunObserveCore(task.processIdentifier,geteuid(),@[fixture],requirement,[NSSet setWithObject:@1.5],NULL));
     NSMutableDictionary *stale = [identity mutableCopy]; stale[@"microseconds"] = @([identity[@"microseconds"] longLongValue]+1);
     CHECK(!PRTunCoreStillOwned(stale,requirement,NULL));
+    NSString *gatewayFixture = [NSString stringWithUTF8String:argv[2]];
+    NSString *gatewayRequirement = @"identifier \"app.perroute.gateway-fixture\"";
+    NSSet *gatewayPorts;
+    NSTask *gateway = Start(gatewayFixture,@"mapped",&gatewayPorts);
+    NSDictionary *chain = PRTunObserveForwardingChain(gateway.processIdentifier,task.processIdentifier,geteuid(),
+        @[gatewayFixture],@[fixture],gatewayRequirement,requirement,gatewayPorts,ports,NULL);
+    CHECK(chain); CHECK(PRTunForwardingStillOwned(chain,gatewayRequirement,requirement,NULL));
+    CHECK(!PRTunObserveForwardingChain(task.processIdentifier,task.processIdentifier,geteuid(),
+        @[gatewayFixture],@[fixture],gatewayRequirement,requirement,gatewayPorts,ports,NULL));
+    CHECK(!PRTunObserveForwardingChain(gateway.processIdentifier,task.processIdentifier,geteuid(),
+        @[gatewayFixture],@[fixture],requirement,gatewayRequirement,gatewayPorts,ports,NULL));
+    CHECK(!PRTunObserveForwardingChain(gateway.processIdentifier,task.processIdentifier,geteuid(),
+        @[gatewayFixture],@[fixture],gatewayRequirement,requirement,ports,gatewayPorts,NULL));
+    CHECK(!PRTunObserveForwardingChain(gateway.processIdentifier,task.processIdentifier,geteuid(),
+        @[gatewayFixture],@[fixture],gatewayRequirement,requirement,ports,ports,NULL));
+    CHECK(!PRTunObserveForwardingChain(gateway.processIdentifier,task.processIdentifier,geteuid()+1,
+        @[gatewayFixture],@[fixture],gatewayRequirement,requirement,gatewayPorts,ports,NULL));
+    NSMutableDictionary *staleChain = [chain mutableCopy]; staleChain[@"core"] = stale;
+    CHECK(!PRTunForwardingStillOwned(staleChain,gatewayRequirement,requirement,NULL));
+    kill(gateway.processIdentifier,SIGTERM); [gateway waitUntilExit];
+    CHECK(!PRTunForwardingStillOwned(chain,gatewayRequirement,requirement,NULL));
     kill(task.processIdentifier,SIGTERM); [task waitUntilExit];
     CHECK(!PRTunCoreStillOwned(identity,requirement,NULL));
     task = Start(fixture,@"wildcard",&ports);
     CHECK(!PRTunObserveCore(task.processIdentifier,geteuid(),@[fixture],requirement,ports,NULL));
     kill(task.processIdentifier,SIGTERM); [task waitUntilExit];
-    printf("Signed Xray endpoint ownership: %u checks passed; disposable loopback listeners only\n",Checks);
+    task = Start(fixture,@"v6-loopback",&ports);
+    CHECK(!PRTunObserveCore(task.processIdentifier,geteuid(),@[fixture],requirement,ports,NULL));
+    kill(task.processIdentifier,SIGTERM); [task waitUntilExit];
+    task = Start(fixture,@"v6-wildcard",&ports);
+    CHECK(!PRTunObserveCore(task.processIdentifier,geteuid(),@[fixture],requirement,ports,NULL));
+    kill(task.processIdentifier,SIGTERM); [task waitUntilExit];
+    printf("Signed gateway/Xray endpoint ownership: %u checks passed; disposable loopback listeners only\n",Checks);
     return 0;
 } }

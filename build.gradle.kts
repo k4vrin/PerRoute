@@ -650,12 +650,15 @@ tasks.register<Exec>("runMacosTunSessionTests") {
 
 val coreFixture = tunTestBinary("compileMacosTunCoreFixture", "core-fixture", listOf("native/macos-tun/CoreFixture.c"), false)
 val signCoreFixture = tunFixtureSignature("signMacosTunCoreFixture", "core-fixture", "app.perroute.core-fixture", coreFixture)
+val gatewayFixture = tunTestBinary("compileMacosTunGatewayFixture", "gateway-fixture", listOf("native/macos-tun/CoreFixture.c"), false)
+val signGatewayFixture = tunFixtureSignature("signMacosTunGatewayFixture", "gateway-fixture", "app.perroute.gateway-fixture", gatewayFixture)
 val coreTests = tunTestBinary("compileMacosTunCoreTests", "core-tests", listOf("native/macos-tun/TunStore.m", "native/macos-tun/CoreOwnership.m", "native/macos-tun/CoreTests.m"))
 tasks.register<Exec>("runMacosTunCoreTests") {
-    dependsOn(signCoreFixture,coreTests)
+    dependsOn(signCoreFixture,signGatewayFixture,coreTests)
     onlyIf { System.getProperty("os.name") == "Mac OS X" }
     commandLine(layout.buildDirectory.file("macos-tun/core-tests").get().asFile.absolutePath,
-        layout.buildDirectory.file("macos-tun/core-fixture").get().asFile.absolutePath)
+        layout.buildDirectory.file("macos-tun/core-fixture").get().asFile.absolutePath,
+        layout.buildDirectory.file("macos-tun/gateway-fixture").get().asFile.absolutePath)
 }
 val authorityTests = tunTestBinary("compileMacosTunAuthorityTests", "authority-tests", tunSessionSources + listOf("native/macos-tun/TunAuthority.m", "native/macos-tun/AuthorityTests.m"))
 tasks.register<Exec>("runMacosTunAuthorityTests") {
