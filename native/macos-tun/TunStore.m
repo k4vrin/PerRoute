@@ -1,4 +1,6 @@
 #import "TunStore.h"
+#import "TunCapture.h"
+#import <net/if.h>
 #import <Security/Security.h>
 #import <libproc.h>
 #import <sys/proc_info.h>
@@ -34,7 +36,7 @@ static BOOL OwnedDirectory(int fd) {
     return fd >= 0 && !fstat(fd, &info) && S_ISDIR(info.st_mode) && info.st_uid == geteuid() && !(info.st_mode & 0077) && PrivateACL(fd);
 }
 static BOOL KnownFile(NSString *name) {
-    return [@[@"lease.json", @"engine.json", @"worker.json", @"config.json", @"engine", @"worker"] containsObject:name];
+    return [@[@"lease.json", @"engine.json", @"worker.json", @"config.json", @"capture.json", @"engine", @"worker"] containsObject:name];
 }
 BOOL PRTunSigned(NSString *path, NSString *text) {
     if (![path isKindOfClass:NSString.class] || !path.isAbsolutePath || ![text isKindOfClass:NSString.class] || !text.length) return NO;
@@ -112,6 +114,27 @@ static NSArray<NSString *> *Files(int directory) {
     if (errno) ok = NO;
     closedir(entries);
     return ok ? [names copy] : nil;
+}
+static BOOL CaptureGone(int directory) {
+    int fd = openat(directory,"capture.json",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    if (fd < 0) return errno == ENOENT;
+    struct stat info;
+    BOOL ok = !fstat(fd,&info) && S_ISREG(info.st_mode) && info.st_uid == geteuid() && info.st_nlink == 1 &&
+        !(info.st_mode & 0077) && info.st_size > 0 && info.st_size <= 4096;
+    NSMutableData *data = ok ? [NSMutableData dataWithLength:info.st_size] : nil;
+    NSUInteger offset = 0;
+    while (ok && offset < data.length) {
+        ssize_t count = read(fd,(char *)data.mutableBytes+offset,data.length-offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) { ok = NO; break; } offset += count;
+    }
+    close(fd);
+    id marker = ok ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+    if (![marker isKindOfClass:NSDictionary.class] || [marker count] != 2 || !Integer(marker[@"version"],1,1) ||
+        ![marker[@"interface"] isEqual:@PR_TUN_INTERFACE]) return NO;
+    for (int i=0;i<20 && if_nametoindex(PR_TUN_INTERFACE);i++) usleep(25000);
+    // An engine exit alone is insufficient to clear capture recovery ownership.
+    return if_nametoindex(PR_TUN_INTERFACE) == 0;
 }
 static BOOL StopStaged(NSString *path) {
     const int capacity = 32768;
@@ -201,7 +224,7 @@ static BOOL StopStaged(NSString *path) {
 }
 - (BOOL)write:(NSData *)data session:(NSString *)session file:(NSString *)name error:(NSError **)error {
     if (![data isKindOfClass:NSData.class] || !data.length || data.length > 1048576 ||
-        ![@[@"lease.json", @"engine.json", @"worker.json", @"config.json"] containsObject:name]) return Fail(error, @"Invalid TUN recovery write");
+        ![@[@"lease.json", @"engine.json", @"worker.json", @"config.json", @"capture.json"] containsObject:name]) return Fail(error, @"Invalid TUN recovery write");
     int directory = [self openSession:session];
     if (directory < 0) return Fail(error, @"Cannot open TUN recovery session");
     NSString *temporary = [@".write-" stringByAppendingString:NSUUID.UUID.UUIDString];
@@ -325,7 +348,7 @@ static BOOL StopStaged(NSString *path) {
     BOOL workerStopped = StopStaged([self path:session file:@"worker"]);
     BOOL engineRecord = [self stopRecorded:session name:@"engine" directory:directory];
     BOOL engineStopped = StopStaged([self path:session file:@"engine"]);
-    BOOL ok = files && workerRecord && workerStopped && engineRecord && engineStopped;
+    BOOL ok = files && workerRecord && workerStopped && engineRecord && engineStopped && CaptureGone(directory);
     if (ok) {
         files = Files(directory);
         ok = files != nil;

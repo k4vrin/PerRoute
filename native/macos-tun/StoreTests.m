@@ -1,4 +1,6 @@
 #import "TunStore.h"
+#import "TunCapture.h"
+#import <net/if.h>
 #import <fcntl.h>
 #import <sys/acl.h>
 #import <membership.h>
@@ -172,6 +174,15 @@ int main(int argc, const char **argv) { @autoreleasepool {
     CHECK(!unlink([store path:session file:@"engine.json"].fileSystemRepresentation));
     CHECK([store cleanup:session error:NULL]);
     CHECK(!kill(unrelated,SIGKILL)); CHECK(waitpid(unrelated,&status,0) == unrelated);
+    session = [store createForUser:501 error:NULL];
+    CHECK([store write:JSON(@{@"version":@YES,@"interface":@PR_TUN_INTERFACE}) session:session file:@"capture.json" error:NULL]);
+    CHECK(![store cleanup:session error:NULL]);
+    CHECK([store write:JSON(@{@"version":@1,@"interface":@"lo0"}) session:session file:@"capture.json" error:NULL]);
+    CHECK(![store cleanup:session error:NULL]);
+    CHECK([store write:JSON(@{@"version":@1,@"interface":@PR_TUN_INTERFACE}) session:session file:@"capture.json" error:NULL]);
+    BOOL absent = if_nametoindex(PR_TUN_INTERFACE) == 0;
+    CHECK([store cleanup:session error:NULL] == absent);
+    if (!absent) { CHECK(!unlink([store path:session file:@"capture.json"].fileSystemRepresentation)); CHECK([store cleanup:session error:NULL]); }
     CHECK(!symlink("/private/tmp",[[NSString stringWithUTF8String:temporary] stringByAppendingPathComponent:NSUUID.UUID.UUIDString].fileSystemRepresentation));
     CHECK(![store sessions:NULL]);
     acl_t acl = acl_init(1);

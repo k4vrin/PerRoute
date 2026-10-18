@@ -2,6 +2,8 @@
 
 static NSString *const PRHelperLabel = @"app.perroute.proxy-helper";
 static NSString *const PRAppIdentifier = @"app.perroute.spike";
+static NSString *const PRTunEngineIdentifier = @"app.perroute.tun-engine";
+static NSString *const PRXrayIdentifier = @"app.perroute.xray";
 static const NSUInteger PRProtocolVersion = 1;
 
 @protocol PRProxyHelper

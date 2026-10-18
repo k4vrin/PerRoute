@@ -72,7 +72,9 @@ def build(app):
         helper = contents / 'Library/HelperTools/PerRouteProxyHelper'
         bridge = contents / 'Frameworks/libPerRouteProxyBridge.dylib'
         installer = contents / 'MacOS/PerRouteHelperInstaller'
-        compile_native(helper, ['ProxyJournal.m', 'ProxyHelper.m', '../macos-tun/TunStore.m', '../macos-tun/TunSession.m', '../macos-tun/EngineWorker.c'], settings, ['SystemConfiguration'], info=SOURCES / 'HelperInfo.plist')
+        compile_native(helper, ['ProxyJournal.m', 'ProxyHelper.m', 'TunService.m', '../macos-tun/TunStore.m',
+                                '../macos-tun/TunSession.m', '../macos-tun/EngineWorker.c', '../macos-tun/CoreOwnership.m',
+                                '../macos-tun/TunAuthority.m', '../macos-tun/TunNetwork.m', '../macos-tun/TunPolicy.m'], settings, ['SystemConfiguration'], info=SOURCES / 'HelperInfo.plist')
         compile_native(bridge, ['ProxyBridge.m'], settings, ['ServiceManagement'], library=True)
         compile_native(installer, ['LocalInstaller.m', '../macos-tun/TunStore.m'], settings, [])
         # The local service is installed with fixed ProgramArguments. Never register the incompatible

@@ -49,7 +49,8 @@ static NSDictionary *Remote(NSDictionary *request, NSString *team) {
     }
     NSDictionary *response;
     @synchronized(replyLock) { response = result; }
-    if (![response[@"ok"] boolValue]) {
+    // Probing an older helper must not invalidate an unrelated live proxy lease.
+    if (![response[@"ok"] boolValue] && ![request[@"operation"] isEqual:@"tun-capabilities"]) {
         @synchronized(ConnectionLock) { if (Connection == connection) { [Connection invalidate]; Connection = nil; } }
     }
     return response;
@@ -125,6 +126,8 @@ static NSDictionary *LocalPerform(NSDictionary *request) {
         return @{@"ok": @YES, @"version": @(PRProtocolVersion), @"result": @{@"registered": @NO, @"pending": @NO}};
     }
     if (!installed) {
+        if (!LocalArtifactsExist() && [operation isEqual:@"stop-tun"])
+            return @{@"ok":@YES,@"version":@(PRProtocolVersion),@"result":@{@"pending":@NO,@"owned":@NO,@"phase":@"stopped",@"registered":@NO}};
         if (!LocalArtifactsExist() && [operation isEqual:@"restore"])
             return @{@"ok": @YES, @"version": @(PRProtocolVersion), @"result": @{@"pending": @NO, @"registered": @NO}};
         return Failure(@"The local helper is missing or its identity changed. Complete setup before connecting");
@@ -175,6 +178,8 @@ static NSDictionary *Perform(NSDictionary *request) {
         return service.status == SMAppServiceStatusEnabled ? @{@"ok": @YES, @"version": @(PRProtocolVersion), @"result": @{}} : Failure(@"The background proxy service is not enabled");
     }
     // Startup/Disconnect never registers a service or opens an authorization dialog.
+    if (service.status == SMAppServiceStatusNotRegistered && [operation isEqual:@"stop-tun"])
+        return @{@"ok":@YES,@"version":@(PRProtocolVersion),@"result":@{@"pending":@NO,@"owned":@NO,@"phase":@"stopped",@"registered":@NO}};
     if (service.status == SMAppServiceStatusNotRegistered && [operation isEqual:@"restore"])
         return @{@"ok": @YES, @"version": @(PRProtocolVersion), @"result": @{@"pending": @NO, @"registered": @NO}};
     if (service.status != SMAppServiceStatusEnabled) return Failure(@"Enable the PerRoute background service in System Settings to restore pending proxy settings");

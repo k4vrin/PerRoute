@@ -1,4 +1,5 @@
 #import "TunPolicy.h"
+#import "TunCapture.h"
 #import <CoreFoundation/CoreFoundation.h>
 
 static id Reject(NSError **error) {
@@ -92,4 +93,19 @@ NSData *PRTunPrepareConfiguration(NSData *request, NSArray<NSString *> *trustedE
         @"route": @{@"auto_detect_interface": @YES, @"rules": rules, @"final": @"unmatched-direct"}};
     NSData *result = [NSJSONSerialization dataWithJSONObject:configuration options:NSJSONWritingSortedKeys error:NULL];
     return result ? [result copy] : Reject(error);
+}
+
+NSData *PRTunActiveConfiguration(NSData *request, NSArray<NSString *> *trustedEngineExecutables, uid_t user, NSError **error) {
+    if (!user || user > INT_MAX) return Reject(error);
+    NSData *prepared = PRTunPrepareConfiguration(request,trustedEngineExecutables,error);
+    if (!prepared) return nil;
+    NSMutableDictionary *configuration = [NSJSONSerialization JSONObjectWithData:prepared options:NSJSONReadingMutableContainers error:error];
+    NSMutableDictionary *inbound = configuration[@"inbounds"][0];
+    inbound[@"auto_route"] = @YES;
+    inbound[@"interface_name"] = @PR_TUN_INTERFACE;
+    // Exact executable paths may be shared by processes of several logged-in users.
+    // The pinned Darwin engine supplies process UIDs; unresolved ownership stays direct.
+    NSArray *rules = configuration[@"route"][@"rules"];
+    for (NSUInteger i=1;i<rules.count;i++) rules[i][@"user_id"] = @[@(user)];
+    return [NSJSONSerialization dataWithJSONObject:configuration options:NSJSONWritingSortedKeys error:error];
 }

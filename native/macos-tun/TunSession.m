@@ -52,13 +52,22 @@ static int StartWorker(NSString *path, NSString *session, int socket, pid_t *pid
 - (instancetype)initWithStore:(PRTunStore *)store user:(uid_t)uid
     engine:(NSString *)engine worker:(NSString *)worker configuration:(NSData *)configuration
     engineRequirement:(NSString *)engineRequirement workerRequirement:(NSString *)workerRequirement error:(NSError **)error {
+    return [self initWithStore:store user:uid engine:engine worker:worker
+        configurationBuilder:^NSData *(NSString *stagedEngine, NSError **builderError) {
+            (void)stagedEngine; (void)builderError; return configuration;
+        } engineRequirement:engineRequirement workerRequirement:workerRequirement error:error];
+}
+- (instancetype)initWithStore:(PRTunStore *)store user:(uid_t)uid
+    engine:(NSString *)engine worker:(NSString *)worker configurationBuilder:(PRTunConfigurationBuilder)builder
+    engineRequirement:(NSString *)engineRequirement workerRequirement:(NSString *)workerRequirement error:(NSError **)error {
     self = [super init]; if (!self) return nil;
     _control = -1; _store = store;
     _identifier = [store createForUser:uid error:error];
     if (!_identifier) return nil;
-    if (![store write:configuration session:_identifier file:@"config.json" error:error] ||
+    NSData *configuration = builder ? builder([store path:_identifier file:@"engine"],error) : nil;
+    if (!configuration || ![store write:configuration session:_identifier file:@"config.json" error:error] ||
         ![store copySigned:engine session:_identifier file:@"engine" requirement:engineRequirement sourceUser:uid error:error] ||
-        ![store copySigned:worker session:_identifier file:@"worker" requirement:workerRequirement sourceUser:geteuid() error:error]) {
+        ![store copySigned:worker session:_identifier file:@"worker" requirement:workerRequirement sourceUser:uid error:error]) {
         [self stop:NULL]; return nil;
     }
     int sockets[2];
