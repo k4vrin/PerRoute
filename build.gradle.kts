@@ -698,3 +698,22 @@ tasks.register<Exec>("checkMacosTunCaptureCandidate") {
     commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/check_macos_tun_capture.py", "--config",
         layout.buildDirectory.file("macos-tun/native-active.json").get().asFile.absolutePath)
 }
+
+// Packaging only: no daemon registration, TUN activation or installed app replacement.
+tasks.register<Exec>("runMacosRoutingBundleTests") {
+    commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/test_macos_routing_bundle.py")
+}
+tasks.register<Exec>("stageMacosRoutingHelper") {
+    dependsOn(tasks.named("createDistributable"), tasks.named("runMacosRoutingBundleTests"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/macos_local_helper.py", "--app",
+        layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app").get().asFile.absolutePath, "--routing")
+}
+
+tasks.register<Exec>("checkMacosRoutingBundle") {
+    dependsOn(tasks.named("createDistributable"), tasks.named("runMacosRoutingBundleTests"), tasks.named("runMacosTunCapturePolicyTests"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/check_macos_routing_bundle.py", "--app",
+        layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app").get().asFile.absolutePath,
+        "--config", layout.buildDirectory.file("macos-tun/native-active.json").get().asFile.absolutePath)
+}

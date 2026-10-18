@@ -8,10 +8,10 @@ import subprocess
 import tempfile
 import macos_helper_probe as signing
 from macos_preview import macho
+from macos_routing_bundle import stage as stage_routing, sign_payloads
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / 'native/macos-helper'
-OUTPUT = ROOT / 'build/macos-local-helper'
 
 
 def compile_native(target, sources, settings, frameworks, *, library=False, info=None):
@@ -36,15 +36,16 @@ def seal(path, settings, identifier=None):
     signing.run(*command, path, quiet=True)
 
 
-def build(app):
+def build(app, *, routing=False):
+    output = ROOT / ("build/macos-routing-helper" if routing else "build/macos-local-helper")
     settings = signing.identity()
     signing.run('/usr/bin/security', 'unlock-keychain', '-p', settings['password'],
                 signing.STATE / 'identity.keychain-db', quiet=True)
-    OUTPUT.mkdir(parents=True, exist_ok=True)
-    policy = OUTPUT / 'LocalPolicyTests'
+    output.mkdir(parents=True, exist_ok=True)
+    policy = output / 'LocalPolicyTests'
     compile_native(policy, ['ProxyJournal.m', 'PolicyTests.m'], settings, [])
     signing.run(policy)
-    identity_test = OUTPUT / 'LocalIdentityTests'
+    identity_test = output / 'LocalIdentityTests'
     compile_native(identity_test, ['LocalIdentityTests.m'], settings, [])
     signing.run(identity_test, 'app.perroute.spike', 'no')
     seal(identity_test, settings, 'app.perroute.spike')
@@ -63,9 +64,9 @@ def build(app):
             if (foreign / 'identity.keychain-db').exists():
                 signing.run('/usr/bin/security', 'delete-keychain', foreign / 'identity.keychain-db', quiet=True)
     print('Local identity: 5 real-signature checks passed; no service changes.')
-    destination = OUTPUT / 'PerRoute.app'
+    destination = output / 'PerRoute.app'
     # Build in disposable staging, so an interrupted build never leaves a partial install candidate.
-    with tempfile.TemporaryDirectory(prefix='.local-', dir=OUTPUT) as temporary:
+    with tempfile.TemporaryDirectory(prefix='.local-', dir=output) as temporary:
         staged = Path(temporary) / 'PerRoute.app'
         shutil.copytree(app, staged, symlinks=True)
         contents = staged / 'Contents'
@@ -80,11 +81,13 @@ def build(app):
         # The local service is installed with fixed ProgramArguments. Never register the incompatible
         # SMAppService BundleProgram manifest from this account-free artifact.
         (contents / 'Library/LaunchDaemons/app.perroute.proxy-helper.plist').unlink(missing_ok=True)
+        routing_payloads = stage_routing(staged) if routing else ()
         runtime_executable = contents / 'runtime/Contents/MacOS/libjli.dylib'
         launcher = contents / 'MacOS/PerRoute'
         for binary in staged.rglob('*'):
-            if macho(binary) and binary not in (launcher, runtime_executable, helper, installer):
+            if macho(binary) and binary not in (launcher, runtime_executable, helper, installer, *routing_payloads):
                 seal(binary, settings)
+        sign_payloads(routing_payloads, settings, seal, signing.run)
         # The administrator installer must be inert without elevation.
         refused = subprocess.run([str(installer)], capture_output=True, text=True)
         if refused.returncode != 78:
@@ -103,4 +106,6 @@ def build(app):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, required=True)
-    build(parser.parse_args().app)
+    parser.add_argument('--routing', action='store_true', help='Include the pinned per-app engine in separate local staging')
+    arguments = parser.parse_args()
+    build(arguments.app, routing=arguments.routing)

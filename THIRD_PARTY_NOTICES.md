@@ -38,3 +38,19 @@ GPL-3.0-or-later and an additional restriction on derivative-work naming or
 implied association. Any future distribution must retain the applicable
 license/source obligations and review those terms before bundling. PerRoute
 does not claim upstream affiliation.
+
+## Optional local macOS routing bundle
+
+The explicit `stageMacosRoutingHelper` task stages the same checksum-pinned
+sing-box 1.14.3 as a separate executable in a local development app. It retains
+the upstream license, includes the GPL version 3 text, and records the exact
+upstream revision, archive/binary hashes and source locations in the bundle.
+The local code signature uses a PerRoute identifier and does not imply upstream
+affiliation. The ordinary local helper and preview tasks retain their existing
+scope.
+
+Local bundle staging does not validate release redistribution or corresponding
+source delivery. Before distributing a release, supply and verify the complete
+corresponding source and applicable build/dependency materials under the terms
+of the included license. The provenance explicitly records that this release
+check is pending. The routing engine is managed as an independent process.
