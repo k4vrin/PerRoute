@@ -1,5 +1,7 @@
 package app.perroute.compose.ui.screens
 
+import app.perroute.model.ApplicationIdentity
+
 import app.perroute.compose.Shell
 import app.perroute.compose.Tab
 import app.perroute.compose.controller.ActionResult
@@ -146,10 +148,10 @@ internal fun RulesScreen(shell: Shell) {
     val listState = rememberLazyListState()
     LaunchedEffect(query, appFilter) { listState.scrollToItem(0) }
     val visible = rules.withIndex().filter { (_, rule) ->
-        (appFilter == null || (appFilter == "" && rule.applicationPath().isBlank()) || rule.applicationPath().equals(appFilter, true)) &&
+        (appFilter == null || (appFilter == "" && rule.applicationPath().isBlank()) || ApplicationIdentity.same(rule.applicationPath(), appFilter)) &&
             (query.isBlank() || rule.name().contains(query, true) || rule.value().contains(query, true))
     }
-    val appChoices = (shell.apps + rules.map { it.applicationPath() }.filter { it.isNotBlank() }).distinctBy { it.lowercase() }
+    val appChoices = (shell.apps + rules.map { it.applicationPath() }.filter { it.isNotBlank() }).distinctBy { ApplicationIdentity.comparisonKey(it) }
 
     ScreenPanel(
         "Routing rules", "Decide which connections use a proxy, stay direct, or are blocked.",
@@ -169,7 +171,7 @@ internal fun RulesScreen(shell: Shell) {
                             listOf(
                                 MenuEntry("All rules", selected = appFilter == null) { appFilter = null },
                                 MenuEntry("All routed apps", detail = "Rules that are not tied to one app", selected = appFilter == "") { appFilter = "" }
-                            ) + appChoices.map { path -> MenuEntry(appName(path), selected = appFilter.equals(path, true)) { appFilter = path } },
+                            ) + appChoices.map { path -> MenuEntry(appName(path), selected = ApplicationIdentity.same(appFilter, path)) { appFilter = path } },
                             Modifier.width(150.dp), icon = Icons.Rounded.Apps, accessibleLabel = "Filter rules by application"
                         )
                     }
@@ -332,7 +334,7 @@ private fun RuleEditorPanel(editor: RuleEditor, apps: List<String>, locked: Bool
             MenuButton(
                 if (editor.app.isBlank()) "All routed apps" else appName(editor.app),
                 listOf(MenuEntry("All routed apps", selected = editor.app.isBlank()) { editor.app = "" }) +
-                    apps.map { path -> MenuEntry(appName(path), selected = editor.app.equals(path, true)) { editor.app = path } },
+                    apps.map { path -> MenuEntry(appName(path), selected = ApplicationIdentity.same(editor.app, path)) { editor.app = path } },
                 Modifier.fillMaxWidth(), icon = Icons.Rounded.Apps, accessibleLabel = "Application this rule applies to", enabled = !locked
             )
             Spacer(Modifier.height(7.dp))

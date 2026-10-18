@@ -39,6 +39,13 @@ public interface ConnectionBackend {
     RouteObservation lookupPublicAddress(Integer socksPort);
     List<String> systemDnsServers();
     String publicResolver();
+    /** Resolve an explicit user selection without guessing the spelling of a saved platform identity. */
+    default String selectApplication(String path) throws java.io.IOException {
+        if (app.perroute.model.ApplicationIdentity.isMac(path)) throw new java.io.IOException("This application belongs to macOS.");
+        return Path.of(path).toAbsolutePath().normalize().toString();
+    }
+    /** Validate a saved selection before applying it to this platform. */
+    default String restoreApplication(String identity) throws java.io.IOException { return selectApplication(identity); }
     List<ApplicationDescriptor> installedApplications();
     List<ApplicationDescriptor> runningApplications();
 

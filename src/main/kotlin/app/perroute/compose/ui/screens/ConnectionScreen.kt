@@ -1,5 +1,7 @@
 package app.perroute.compose.ui.screens
 
+import app.perroute.model.ApplicationIdentity
+
 import app.perroute.compose.Shell
 import app.perroute.compose.Tab
 import app.perroute.compose.controller.ActionResult
@@ -450,7 +452,7 @@ private fun activeAppSummary(traffic: TrafficSnapshot): String {
 @Composable
 private fun RouteSummaryRow(shell: Shell, row: RouteRow, check: RouteCheck?, health: app.perroute.routing.RouteHealthTracker.Snapshot?,
                             monitoring: Boolean, now: Long) {
-    val activePaths = shell.traffic.applications.filter { it.active }.map { it.path.lowercase() }.toSet()
+    val activePaths = shell.traffic.applications.filter { it.active }.map { ApplicationIdentity.comparisonKey(it.path) }.toSet()
     val affected = shell.connected && monitoring && health?.affected() == true
     var expanded by remember(row.id) { mutableStateOf(false) }
     val showDetails = affected && (expanded || health?.state() == app.perroute.routing.RouteHealthTracker.State.RECOVERING)
@@ -483,7 +485,7 @@ private fun RouteSummaryRow(shell: Shell, row: RouteRow, check: RouteCheck?, hea
                             Spacer(Modifier.width(5.dp))
                             Text(appName(path), color = White.copy(.86f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f, fill = false))
-                            if (shell.connected && path.lowercase() in activePaths) { Spacer(Modifier.width(4.dp)); StatusDot(Cyan, 6.dp) }
+                            if (shell.connected && ApplicationIdentity.comparisonKey(path) in activePaths) { Spacer(Modifier.width(4.dp)); StatusDot(Cyan, 6.dp) }
                             Spacer(Modifier.width(9.dp))
                         }
                         if (row.applications.size > 3) Text("+${row.applications.size - 3}", color = Muted, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)

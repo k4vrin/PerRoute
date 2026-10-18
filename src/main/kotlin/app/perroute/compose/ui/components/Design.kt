@@ -1,5 +1,7 @@
 package app.perroute.compose.ui.components
 
+import app.perroute.model.ApplicationIdentity
+
 import app.perroute.compose.Shell
 import app.perroute.compose.controller.PerRouteController
 
@@ -694,12 +696,12 @@ private val appIconCache = ConcurrentHashMap<String, java.util.Optional<ImageBit
 /** The executable's own icon when Windows can provide one. Callers fall back to the letter avatar. */
 @Composable
 private fun rememberAppIcon(path: String): ImageBitmap? {
-    val key = path.lowercase()
+    val key = ApplicationIdentity.comparisonKey(path)
     val state = produceState(appIconCache[key]?.orElse(null), key) {
         if (appIconCache.containsKey(key)) { value = appIconCache[key]?.orElse(null); return@produceState }
         value = withContext(Dispatchers.IO) {
             val loaded = runCatching {
-                val file = java.io.File(path)
+                val file = java.io.File(ApplicationIdentity.path(path))
                 if (!file.isFile) return@runCatching null
                 val icon = javax.swing.filechooser.FileSystemView.getFileSystemView().getSystemIcon(file, 32, 32) ?: return@runCatching null
                 val image = java.awt.image.BufferedImage(icon.iconWidth.coerceAtLeast(1), icon.iconHeight.coerceAtLeast(1), java.awt.image.BufferedImage.TYPE_INT_ARGB)
@@ -772,7 +774,7 @@ internal fun protocolLabel(node: ProxyNode): String =
 /** An executable path as a readable application name. */
 internal fun appName(path: String): String = PerRouteController.displayName(path)
 
-internal fun fileName(path: String): String = runCatching { Path.of(path).fileName.toString() }.getOrDefault(path)
+internal fun fileName(path: String): String = runCatching { Path.of(ApplicationIdentity.path(path)).fileName.toString() }.getOrDefault(path)
 
 /** Joins names as "A, B and C", shortening long lists to "... and N more". */
 internal fun joinNames(names: List<String>, limit: Int = 3): String = when {

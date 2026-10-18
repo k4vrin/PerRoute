@@ -717,3 +717,10 @@ tasks.register<Exec>("checkMacosRoutingBundle") {
         layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app").get().asFile.absolutePath,
         "--config", layout.buildDirectory.file("macos-tun/native-active.json").get().asFile.absolutePath)
 }
+
+tasks.register<JavaExec>("runApplicationIdentityTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.ApplicationIdentityTests")
+    enableAssertions = true
+}

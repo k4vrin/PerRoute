@@ -1,6 +1,7 @@
 package app.perroute.platform.macos;
 
 import app.perroute.backend.api.*;
+import app.perroute.model.ApplicationIdentity;
 import app.perroute.backend.core.NetworkDiagnostics;
 import app.perroute.gateway.AppGateway;
 import app.perroute.gateway.GatewayConnection;
@@ -90,6 +91,20 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
     @Override public void applyPerApp(List<String> apps) { throw unavailable("Per-app routing"); }
     @Override public void restorePerApp() { throw unavailable("Per-app recovery"); }
     @Override public void stopPerAppSidecar() { throw unavailable("Per-app sidecar"); }
+    @Override public String selectApplication(String path) throws java.io.IOException {
+        String raw = ApplicationIdentity.path(path);
+        if (raw == null || !raw.startsWith("/")) throw new java.io.IOException("Select a macOS executable from the application list.");
+        Path executable = Path.of(raw).toRealPath();
+        if (!java.nio.file.Files.isRegularFile(executable) || !java.nio.file.Files.isExecutable(executable))
+            throw new java.io.IOException("Select an executable file, rather than its application folder.");
+        return ApplicationIdentity.macExecutable(executable.toString());
+    }
+    @Override public String restoreApplication(String identity) throws java.io.IOException {
+        if (!ApplicationIdentity.isMac(identity)) throw new java.io.IOException("Reselect this application on macOS; its old path cannot be migrated safely.");
+        String resolved = selectApplication(identity);
+        if (!resolved.equals(identity)) throw new java.io.IOException("The application's executable path changed. Select it again.");
+        return resolved;
+    }
     @Override public List<ApplicationDescriptor> installedApplications() {
         return descriptors(MacApplicationCatalog.system()::installed);
     }
@@ -101,7 +116,7 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
             var snapshot = source.read();
             if (!snapshot.warnings().isEmpty()) throw new java.io.IOException(String.join("; ", snapshot.warnings()));
             return snapshot.applications().stream()
-                    .map(app -> new ApplicationDescriptor(app.name(), app.executablePath().toString())).toList();
+                    .map(app -> new ApplicationDescriptor(app.name(), ApplicationIdentity.macExecutable(app.executablePath().toString()))).toList();
         } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
     }
     @FunctionalInterface private interface CatalogRead { MacApplicationCatalog.Snapshot read() throws java.io.IOException; }

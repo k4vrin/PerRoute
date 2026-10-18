@@ -1,5 +1,7 @@
 package app.perroute.compose
 
+import app.perroute.model.ApplicationIdentity
+
 import app.perroute.compose.controller.ActionResult
 import app.perroute.compose.controller.ConnectionPhase
 import app.perroute.compose.controller.PerRouteController
@@ -214,13 +216,13 @@ internal class AppsDraft {
         auto = shell.controller.autoApps()
         pools = shell.controller.autoPools()
         manualPending = emptySet()
-        if (focused != null && selected.none { it.equals(focused, true) }) focused = null
+        if (focused != null && selected.none { ApplicationIdentity.same(it, focused) }) focused = null
     }
 
     fun dirty(shell: Shell): Boolean =
         advanced != shell.advanced || routes != shell.appRoutes || auto != shell.controller.autoApps() ||
             pools != shell.controller.autoPools() || manualPending.isNotEmpty() ||
-            selected.map { it.lowercase() } != shell.apps.map { it.lowercase() }
+            selected.map { ApplicationIdentity.comparisonKey(it) } != shell.apps.map { ApplicationIdentity.comparisonKey(it) }
 
     fun mode(path: String): app.perroute.routing.AppRouteMode {
         val key = AppRoutes.normalize(path)
@@ -246,10 +248,10 @@ internal class AppsDraft {
         pools = if (pool.kind() == app.perroute.routing.AutoCandidatePool.Kind.ALL) pools - key else pools + (key to pool.encode())
     }
 
-    fun isSelected(path: String) = selected.any { it.equals(path, true) }
+    fun isSelected(path: String) = selected.any { ApplicationIdentity.same(it, path) }
 
     fun toggle(path: String) {
-        if (isSelected(path)) selected.removeAll { it.equals(path, true) } else selected += path
+        if (isSelected(path)) selected.removeAll { ApplicationIdentity.same(it, path) } else selected += path
     }
 
     fun assign(path: String, nodeKey: String?) {

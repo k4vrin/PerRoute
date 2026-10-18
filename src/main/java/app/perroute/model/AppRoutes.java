@@ -8,9 +8,10 @@ import java.util.Map;
 public final class AppRoutes {
     private AppRoutes() {}
 
-    /** Windows paths are case-insensitive, so assignments are keyed by the lower-cased absolute path. */
+    /** Legacy Windows normalization is unchanged; tagged macOS identities remain exact on every host. */
     public static String normalize(String applicationPath) {
         if (applicationPath == null || applicationPath.isBlank()) return "";
+        if (ApplicationIdentity.isMac(applicationPath)) return ApplicationIdentity.macExecutable(ApplicationIdentity.path(applicationPath));
         String text = applicationPath.trim();
         try { text = Path.of(text).toAbsolutePath().normalize().toString(); }
         catch (RuntimeException ignored) { }

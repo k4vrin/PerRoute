@@ -1,6 +1,7 @@
 package app.perroute.service;
 
 import app.perroute.util.Json;
+import app.perroute.model.ApplicationIdentity;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -66,7 +67,7 @@ public final class TrafficHistoryStore implements AutoCloseable {
      * day of the current month (newest first). Only byte counts exist; nothing here names a destination.
      */
     public synchronized Report report(String applicationFilter) {
-        String filter = applicationFilter == null ? "" : applicationFilter.trim();
+        String filter = applicationFilter == null ? "" : ApplicationIdentity.isMac(applicationFilter) ? applicationFilter : applicationFilter.trim();
         String today = LocalDate.now().toString();
         String month = YearMonth.now().toString();
         long todayDown = 0, todayUp = 0, monthDown = 0, monthUp = 0;
@@ -83,7 +84,7 @@ public final class TrafficHistoryStore implements AutoCloseable {
                     Counters todayTarget = todayApps.computeIfAbsent(app.getKey(), ignored -> new Counters());
                     todayTarget.down += app.getValue().down; todayTarget.up += app.getValue().up;
                 }
-                if (!filter.isEmpty() && !app.getKey().equalsIgnoreCase(filter)) continue;
+                if (!filter.isEmpty() && !ApplicationIdentity.same(app.getKey(), filter)) continue;
                 dayDown += app.getValue().down; dayUp += app.getValue().up;
             }
             monthDown += dayDown; monthUp += dayUp;

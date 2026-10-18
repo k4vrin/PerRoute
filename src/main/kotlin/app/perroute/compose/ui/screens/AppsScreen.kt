@@ -1,5 +1,7 @@
 package app.perroute.compose.ui.screens
 
+import app.perroute.model.ApplicationIdentity
+
 import app.perroute.compose.Shell
 import app.perroute.compose.controller.BandwidthState
 import app.perroute.compose.controller.BandwidthStatus
@@ -180,7 +182,7 @@ internal fun AppsScreen(shell: Shell) {
     // Every application that was selected at some point keeps its row, so a browsed EXE that is
     // unticked by mistake can simply be ticked again.
     val manual = remember { mutableStateListOf<String>() }
-    (shell.apps + draft.selected).forEach { path -> if (manual.none { it.equals(path, true) }) manual += path }
+    (shell.apps + draft.selected).forEach { path -> if (manual.none { ApplicationIdentity.same(it, path) }) manual += path }
 
     val selectedRoutes = draft.selected.map { it to draftRoute(shell, it) }
     val unresolved = if (draft.advanced) selectedRoutes.filter { it.second.missing } else emptyList()
@@ -241,13 +243,13 @@ internal fun AppsScreen(shell: Shell) {
                             val loading = if (source == AppListSource.RUNNING) runningLoading else installedLoading
                             val available = if (source == AppListSource.RUNNING) running else installed
                             // Apps added with Browse, or no longer discovered, still need a row to be managed.
-                            val extra = manual.filter { path -> available.none { it.path.equals(path, true) } }
+                            val extra = manual.filter { path -> available.none { ApplicationIdentity.same(it.path, path) } }
                                 .map { AppChoice(fileName(it), it) }
                             // Saved selections lead the list. The order is fixed when the list loads, so ticking
                             // a box never makes its row jump away from the pointer.
-                            val pinned = remember(available, shell.apps.toList()) { shell.apps.mapTo(hashSetOf()) { it.lowercase() } }
+                            val pinned = remember(available, shell.apps.toList()) { shell.apps.mapTo(hashSetOf()) { ApplicationIdentity.comparisonKey(it) } }
                             val filtered = (extra + available).filter { query.isBlank() || it.name.contains(query, true) || it.path.contains(query, true) }
-                                .sortedByDescending { it.path.lowercase() in pinned }
+                                .sortedByDescending { ApplicationIdentity.comparisonKey(it.path) in pinned }
                             when {
                                 // Rows are only shown once discovery is done, so the list never reorders under the pointer.
                                 loading -> LoadingState("Looking for applications…", Modifier.fillMaxSize())
@@ -259,7 +261,7 @@ internal fun AppsScreen(shell: Shell) {
                                     if (source == AppListSource.RUNNING) "Start the application first, or pick it from installed apps." else "Browse for the EXE to add an application manually.",
                                     Modifier.fillMaxSize()) { SecondaryButton("Refresh", icon = Icons.Rounded.Refresh) { refreshApplications(true) } }
                                 else -> LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                                    items(filtered, key = { it.path.lowercase() }) { app ->
+                                    items(filtered, key = { ApplicationIdentity.comparisonKey(it.path) }) { app ->
                                         AppRow(shell, app, draft.isSelected(app.path), locked, pickerWidth, wide)
                                     }
                                 }
@@ -268,7 +270,7 @@ internal fun AppsScreen(shell: Shell) {
                     }
                 }
                 if (wide) GlassCard(Modifier.width(236.dp).fillMaxHeight()) {
-                    val focused = draft.focused?.takeIf { path -> draft.selected.any { it.equals(path, true) } }
+                    val focused = draft.focused?.takeIf { path -> draft.selected.any { ApplicationIdentity.same(it, path) } }
                     if (focused != null) FocusedPanel(shell, focused, locked)
                     else SelectedPanel(shell, selectedRoutes, serverCount, locked)
                 }
@@ -295,7 +297,8 @@ internal fun AppsScreen(shell: Shell) {
                     }
                     val file = dialog.file
                     if (file != null) {
-                        val path = Path.of(dialog.directory, file).toAbsolutePath().normalize().toString()
+                        val path = runCatching { shell.controller.selectedApplicationIdentity(Path.of(dialog.directory, file).toAbsolutePath().normalize().toString()) }
+                            .getOrElse { shell.notify(app.perroute.compose.controller.ActionResult(false, it.message ?: "Select an executable file.")); return@SecondaryButton }
                         if (!draft.isSelected(path)) draft.selected += path
                         draft.focused = path
                     }
@@ -335,7 +338,7 @@ internal fun AdvancedRow(title: String, detail: String, checked: Boolean, enable
 @Composable
 private fun AppRow(shell: Shell, app: AppChoice, selected: Boolean, locked: Boolean, pickerWidth: Dp, wide: Boolean) {
     val draft = shell.draft
-    val focused = draft.focused?.equals(app.path, true) == true
+    val focused = ApplicationIdentity.same(draft.focused, app.path)
     Row(
         Modifier.fillMaxWidth().alpha(if (locked) .82f else 1f).clip(RowShape)
             .background(if (selected) Violet.copy(if (focused) .17f else .11f) else NeutralOverlay.copy(.035f))
@@ -348,7 +351,7 @@ private fun AppRow(shell: Shell, app: AppChoice, selected: Boolean, locked: Bool
             Modifier.weight(1f).focusRing(RowShape).clip(RowShape)
                 .toggleable(selected, enabled = !locked, role = Role.Checkbox) {
                     draft.toggle(app.path)
-                    draft.focused = if (draft.isSelected(app.path)) app.path else draft.focused?.takeUnless { it.equals(app.path, true) }
+                    draft.focused = if (draft.isSelected(app.path)) app.path else draft.focused?.takeUnless { ApplicationIdentity.same(it, app.path) }
                 }
                 .then(if (locked) Modifier else Modifier.pointerHoverIcon(PointerIcon.Hand))
                 .semantics { contentDescription = "Route ${app.name.removeSuffix(".exe")} through the proxy" }
@@ -359,7 +362,7 @@ private fun AppRow(shell: Shell, app: AppChoice, selected: Boolean, locked: Bool
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 EllipsisText(app.name.removeSuffix(".exe"), White, 12.5.sp, fontWeight = FontWeight.SemiBold)
-                EllipsisText(app.path, Muted, 9.sp)
+                EllipsisText(ApplicationIdentity.path(app.path), Muted, 9.sp)
             }
             Spacer(Modifier.width(10.dp))
             CheckMark(selected)
@@ -496,10 +499,10 @@ private fun FocusedPanel(shell: Shell, path: String, locked: Boolean) {
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 EllipsisText(appName(path), White, 11.5.sp, fontWeight = FontWeight.SemiBold)
-                EllipsisText(path, Muted, 8.5.sp)
+                EllipsisText(ApplicationIdentity.path(path), Muted, 8.5.sp)
             }
             IconAction(Icons.Rounded.Close, "Remove ${appName(path)} from the selection", enabled = !locked, size = 26.dp) {
-                draft.selected.removeAll { it.equals(path, true) }
+                draft.selected.removeAll { ApplicationIdentity.same(it, path) }
                 draft.focused = null
             }
         }
@@ -687,7 +690,7 @@ private fun SelectedPanel(shell: Shell, selectedRoutes: List<Pair<String, DraftR
             Text("Nothing selected yet. Tick an application to route it through the proxy.", color = Muted, fontSize = 10.5.sp, lineHeight = 14.sp,
                 modifier = Modifier.weight(1f))
         } else LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(selectedRoutes, key = { it.first.lowercase() }) { (path, route) ->
+            items(selectedRoutes, key = { ApplicationIdentity.comparisonKey(it.first) }) { (path, route) ->
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).pressable(RoundedCornerShape(12.dp), label = "Details of ${appName(path)}") { draft.focused = path }
                         .background(NeutralOverlay.copy(.05f)).padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
@@ -764,7 +767,7 @@ private fun ReadOnlyApplications(shell: Shell) {
             items(apps, key = { it.path() }) { app ->
                 Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                     Text(app.name(), color = White)
-                    Text(app.path(), color = Muted, fontSize = 11.sp)
+                    Text(ApplicationIdentity.path(app.path()), color = Muted, fontSize = 11.sp)
                 }
             }
         }

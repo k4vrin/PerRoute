@@ -10,6 +10,7 @@ import app.perroute.backend.api.ApplicationDescriptor
 import app.perroute.backend.api.RouteObservation
 import app.perroute.backend.api.UpdateDescriptor
 
+import app.perroute.model.ApplicationIdentity
 import app.perroute.model.AppRoutes
 import app.perroute.model.AppState
 import app.perroute.model.ConnectionMode
@@ -856,7 +857,7 @@ class PerRouteController @JvmOverloads constructor(
     /** Running instances of an executable, for the inspector's details. Process identity is observed, not stored. */
     fun processIds(path: String): List<Long> = runCatching {
         ProcessHandle.allProcesses()
-            .filter { handle -> handle.info().command().map { it.equals(path, ignoreCase = true) }.orElse(false) }
+            .filter { handle -> handle.info().command().map { ApplicationIdentity.path(path).equals(it, ignoreCase = !ApplicationIdentity.isMac(path)) }.orElse(false) }
             .limit(16).map { it.pid() }.toList()
     }.getOrDefault(emptyList())
 
@@ -1150,10 +1151,10 @@ class PerRouteController @JvmOverloads constructor(
 
     fun addApplication(path: String): ActionResult {
         editLock("the selected apps")?.let { return it }
-        val normalized = Path.of(path).toAbsolutePath().normalize().toString()
-        if (!Files.isRegularFile(Path.of(normalized))) return ActionResult(false, "That application was not found.")
+        val normalized = runCatching { backend.selectApplication(path) }.getOrElse { return ActionResult(false, it.message ?: "Select this application again.") }
+        if (!Files.isRegularFile(Path.of(ApplicationIdentity.path(normalized)))) return ActionResult(false, "That application was not found.")
         synchronized(state) {
-            if (state.appPaths().none { it.equals(normalized, ignoreCase = true) }) state.appPaths().add(normalized)
+            if (state.appPaths().none { ApplicationIdentity.same(it, normalized) }) state.appPaths().add(normalized)
         }
         save()
         return ActionResult(true, "Application added.")
@@ -1161,7 +1162,8 @@ class PerRouteController @JvmOverloads constructor(
 
     fun replaceApplications(paths: Collection<String>): ActionResult {
         editLock("the selected apps")?.let { return it }
-        synchronized(state) { storeApplications(paths) }
+        try { synchronized(state) { storeApplications(paths) } }
+        catch (error: Exception) { return ActionResult(false, error.message ?: "Select these applications again.") }
         save()
         return ActionResult(true, "Selection saved.")
     }
@@ -1178,9 +1180,10 @@ class PerRouteController @JvmOverloads constructor(
                              autoApps: Set<String>, pools: Map<String, String>): ActionResult {
         if (!capabilities().perApp()) return ActionResult(false, "Per-app routing is unavailable on this platform.")
         editLock("app routes")?.let { return it }
+        val validated = runCatching { validatedApplications(paths) }.getOrElse { return ActionResult(false, it.message ?: "Select these applications again.") }
         val newlyAuto: Boolean
         synchronized(state) {
-            storeApplications(paths)
+            storeApplications(validated)
             storeRoutes(routes)
             val auto = autoApps.map { AppRoutes.normalize(it) }.filter { it.isNotBlank() }.toCollection(LinkedHashSet())
             newlyAuto = (auto - state.autoApps()).isNotEmpty()
@@ -1201,12 +1204,18 @@ class PerRouteController @JvmOverloads constructor(
         return ActionResult(true, "Changes saved.")
     }
 
+    /** Resolve a new explicit Browse selection before adding it to an unsaved draft. */
+    fun selectedApplicationIdentity(path: String): String = backend.selectApplication(path)
+
+    private fun validatedApplications(paths: Collection<String>): List<String> =
+        paths.map { backend.restoreApplication(it) }
+            .distinctBy { ApplicationIdentity.comparisonKey(it) }
+            .filter { Files.isRegularFile(Path.of(ApplicationIdentity.path(it))) }
+
     private fun storeApplications(paths: Collection<String>) {
+        val validated = validatedApplications(paths)
         state.appPaths().clear()
-        paths.map { Path.of(it).toAbsolutePath().normalize().toString() }
-            .distinctBy { it.lowercase(Locale.ROOT) }
-            .filter { Files.isRegularFile(Path.of(it)) }
-            .forEach(state.appPaths()::add)
+        state.appPaths().addAll(validated)
     }
 
     private fun storeRoutes(routes: Map<String, String>) {
@@ -1220,7 +1229,7 @@ class PerRouteController @JvmOverloads constructor(
 
     fun removeApplication(path: String): ActionResult {
         editLock("the selected apps")?.let { return it }
-        synchronized(state) { state.appPaths().removeIf { it.equals(path, ignoreCase = true) } }
+        synchronized(state) { state.appPaths().removeIf { ApplicationIdentity.same(it, path) } }
         save()
         return ActionResult(true, "Application removed.")
     }
@@ -1680,8 +1689,9 @@ class PerRouteController @JvmOverloads constructor(
         val profile = synchronized(state) { state.profiles().firstOrNull { it.id() == id } }
             ?: return ActionResult(false, "Profile was not found.")
         if (!capabilities().supports(profile.mode()) || (profile.advancedRouting() && !capabilities().perApp())) return ActionResult(false, "This profile requires unavailable routing features. Nothing was changed.")
+        val validated = runCatching { validatedApplications(profile.applicationPaths()) }.getOrElse { return ActionResult(false, it.message ?: "Select the profile applications again.") }
         synchronized(state) {
-            state.appPaths().clear(); state.appPaths().addAll(profile.applicationPaths().filter { Files.isRegularFile(Path.of(it)) })
+            state.appPaths().clear(); state.appPaths().addAll(validated)
             if (state.nodes().any { it.key() == profile.nodeKey() }) state.setSelectedNodeKey(profile.nodeKey())
             state.setConnectionMode(profile.mode())
             state.routeRules().clear(); state.routeRules().addAll(profile.rules())
@@ -2494,7 +2504,7 @@ class PerRouteController @JvmOverloads constructor(
         }
 
         fun displayName(applicationPath: String): String =
-            runCatching { Path.of(applicationPath).fileName.toString() }.getOrDefault(applicationPath)
+            runCatching { Path.of(ApplicationIdentity.path(applicationPath)).fileName.toString() }.getOrDefault(applicationPath)
                 .let { if (it.endsWith(".exe", ignoreCase = true)) it.dropLast(4) else it }
 
         private fun isUserFacingApplication(app: ApplicationDescriptor): Boolean {

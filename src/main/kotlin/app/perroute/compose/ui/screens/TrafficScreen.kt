@@ -1,5 +1,7 @@
 package app.perroute.compose.ui.screens
 
+import app.perroute.model.ApplicationIdentity
+
 import app.perroute.compose.Shell
 import app.perroute.compose.controller.BandwidthState
 import app.perroute.compose.controller.BandwidthStatus
@@ -114,7 +116,7 @@ internal fun TrafficScreen(shell: Shell) {
     LaunchedEffect(appFilter) {
         while (isActive) { report = controller.trafficReport(appFilter); points = controller.trafficPoints(); delay(1_000) }
     }
-    val knownApps = (report.monthApplications().map { it.applicationPath() } + shell.apps).distinctBy { it.lowercase() }
+    val knownApps = (report.monthApplications().map { it.applicationPath() } + shell.apps).distinctBy { ApplicationIdentity.comparisonKey(it) }
 
     ScreenPanel(
         "Traffic & bandwidth", "Live traffic, usage and limits per app. Stored on this device; destinations are never recorded.",
@@ -137,7 +139,7 @@ internal fun TrafficScreen(shell: Shell) {
                 MenuButton(
                     if (appFilter.isBlank()) "All apps" else appName(appFilter),
                     listOf(MenuEntry("All apps", selected = appFilter.isBlank()) { appFilter = "" }) +
-                        knownApps.map { path -> MenuEntry(appName(path), selected = appFilter.equals(path, true)) { appFilter = path } },
+                        knownApps.map { path -> MenuEntry(appName(path), selected = ApplicationIdentity.same(appFilter, path)) { appFilter = path } },
                     Modifier.width(170.dp), icon = Icons.Rounded.Apps, accessibleLabel = "Show totals for an application"
                 )
             }
@@ -228,7 +230,7 @@ private fun BandwidthTable(shell: Shell) {
             Spacer(Modifier.width(30.dp))
         }
         shell.apps.forEach { path ->
-            val usage = shell.traffic.applications.firstOrNull { it.path.equals(path, true) }
+            val usage = shell.traffic.applications.firstOrNull { ApplicationIdentity.same(it.path, path) }
             val status = statuses[path] ?: controller.bandwidthStatus(path)
             val policy = status.policy
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -325,7 +327,7 @@ private fun UsageBar(modifier: Modifier, fraction: Float, color: Color) {
 /** Download and upload per application. */
 @Composable
 private fun UsageList(title: String, entries: List<TrafficHistoryStore.Entry>, filter: String, empty: String) {
-    val shown = entries.filter { filter.isBlank() || it.applicationPath().equals(filter, true) }
+    val shown = entries.filter { filter.isBlank() || ApplicationIdentity.same(it.applicationPath(), filter) }
     Text(title, color = White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(8.dp))
     if (shown.isEmpty()) { Text(empty, color = Muted, fontSize = 10.5.sp, lineHeight = 14.sp); return }
