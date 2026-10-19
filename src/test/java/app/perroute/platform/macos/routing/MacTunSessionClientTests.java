@@ -22,9 +22,10 @@ public final class MacTunSessionClientTests {
         final Path marker;
         final List<String> calls = new ArrayList<>();
         String generation = UUID.randomUUID().toString();
+        Map<String,Object> replyOverride;
         boolean oldEndpoints, unavailable, missing, alwaysStarting, badOwnership, cleanupFails, failAfterStart, interruptStart, started;
         Peer(Path marker) { this.marker = marker; }
-        Map<String,Object> state() { return Map.of("pending",true,"owned",badOwnership ? 1 : true,
+        Map<String,Object> state() { if (replyOverride != null) return replyOverride; return Map.of("pending",true,"owned",badOwnership ? 1 : true,
                 "phase",alwaysStarting ? "starting" : "ready","session",generation); }
         @Override public Map<String,Object> request(String operation, Map<String,Object> values) throws IOException {
             calls.add(operation);
@@ -87,6 +88,15 @@ public final class MacTunSessionClientTests {
             check(!peer.calls.contains("start-tun") && !Files.exists(marker));
             peer = new Peer(marker); peer.badOwnership = true; var bad = client(peer);
             failure(IOException.class, () -> bad.start(ROUTES,123,UPSTREAMS)); check(!bad.pendingRecovery());
+            for (String field : List.of("pending","owned","phase","session")) {
+                var malformed = new Peer(marker);
+                var reply = new HashMap<String,Object>(malformed.state());
+                reply.remove(field); malformed.replyOverride = reply;
+                var malformedClient = client(malformed);
+                var rejected = failure(IOException.class, () -> malformedClient.start(ROUTES,123,UPSTREAMS));
+                check(rejected.getMessage().contains(field.equals("session") ? "session identifier" : field));
+                check(!malformedClient.pendingRecovery() && !malformed.started);
+            }
             peer = new Peer(marker); peer.badOwnership = true; peer.failAfterStart = true; var pending = client(peer);
             Exception error = failure(IOException.class, () -> pending.start(ROUTES,123,UPSTREAMS)); check(error.getSuppressed().length == 1 && pending.pendingRecovery());
             peer.cleanupFails = false; pending.stop(); check(!pending.pendingRecovery());

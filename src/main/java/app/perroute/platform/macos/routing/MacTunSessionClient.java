@@ -96,10 +96,14 @@ public final class MacTunSessionClient {
         return "ready".equals(state.get("phase"));
     }
     private static String identity(Map<String, Object> state) throws IOException {
-        if (!Boolean.TRUE.equals(state.get("pending")) || !Boolean.TRUE.equals(state.get("owned")) ||
-                !("ready".equals(state.get("phase")) || "starting".equals(state.get("phase"))) ||
-                !(state.get("session") instanceof String identifier) || identifier.length() != 36)
-            throw new IOException("The background service did not confirm ownership of the per-app session.");
+        // Name the rejected field without logging native tokens, paths or arbitrary reply contents.
+        String rejected = !Boolean.TRUE.equals(state.get("pending")) ? "pending flag" :
+                !Boolean.TRUE.equals(state.get("owned")) ? "owned flag" :
+                !("ready".equals(state.get("phase")) || "starting".equals(state.get("phase"))) ? "phase" :
+                !(state.get("session") instanceof String value) || value.length() != 36 ? "session identifier" : null;
+        if (rejected != null)
+            throw new IOException("The background service did not confirm ownership of the per-app session: invalid " + rejected + ".");
+        String identifier = (String) state.get("session");
         try {
             if (!UUID.fromString(identifier).toString().equalsIgnoreCase(identifier)) throw new IllegalArgumentException();
             return identifier;

@@ -10,6 +10,9 @@ static BOOL Fail(NSError **error, NSString *message) { if (error) *error = PRTun
     uid_t _user;
     double _deadline;
     BOOL _ready;
+    id _failedOwner;
+    uid_t _failedUser;
+    NSError *_lastFailure;
 }
 - (instancetype)initWithStore:(PRTunStore *)store {
     self = [super init]; if (self) _store = store; return self;
@@ -26,6 +29,7 @@ static BOOL Fail(NSError **error, NSString *message) { if (error) *error = PRTun
     if (!owner || !uid || !create || !health) { Fail(error,@"Invalid native TUN ownership context"); return nil; }
     if (_session) { Fail(error,@"Stop the existing per-app session before starting another"); return nil; }
     if (![self recover:error]) return nil;
+    _failedOwner = nil; _failedUser = 0; _lastFailure = nil;
     PRTunSession *session = create(error);
     if (!session) return nil;
     _session = session; _owner = owner; _user = uid; _health = [health copy]; _deadline = Now()+10; _ready = NO;
@@ -38,8 +42,13 @@ static BOOL Fail(NSError **error, NSString *message) { if (error) *error = PRTun
     BOOL healthy = [_session poll:&failure] && _health(&ready,&failure);
     if (!healthy || (!ready && Now() >= _deadline) || (_ready && !ready)) {
         if (!failure) failure = PRTunError(_ready ? @"The active tunnel interface or routes were lost" : @"The tunnel did not become ready before its deadline");
+        id failedOwner = _owner;
+        uid_t failedUser = _user;
         NSError *cleanup = nil;
         if (![self stopInternal:&cleanup]) failure = cleanup ?: failure;
+        // The timer can finish cleanup before the next Java poll. Preserve its failure for
+        // the same authenticated owner instead of returning a misleading stopped success.
+        _failedOwner = failedOwner; _failedUser = failedUser; _lastFailure = failure;
         if (error) *error = failure;
         return NO;
     }
@@ -47,6 +56,10 @@ static BOOL Fail(NSError **error, NSString *message) { if (error) *error = PRTun
     return YES;
 }
 - (NSDictionary *)statusOwner:(id)owner user:(uid_t)uid error:(NSError **)error {
+    if (_lastFailure && owner == _failedOwner && uid == _failedUser) {
+        if (error) *error = _lastFailure;
+        return nil;
+    }
     if (_session && ![self ownedBy:owner user:uid]) {
         if ([self recoveryForUser:uid]) return @{@"pending":@YES,@"owned":@NO,@"phase":@"recovering"};
         Fail(error,@"Another authenticated connection owns per-app routing"); return nil;
@@ -59,9 +72,14 @@ static BOOL Fail(NSError **error, NSString *message) { if (error) *error = PRTun
 }
 - (BOOL)stopOwner:(id)owner user:(uid_t)uid error:(NSError **)error {
     if (_session && ![self ownedBy:owner user:uid] && ![self recoveryForUser:uid]) return Fail(error,@"Another authenticated connection owns per-app routing");
-    return [self stopInternal:error] && [self recover:error];
+    BOOL stopped = [self stopInternal:error] && [self recover:error];
+    if (stopped && owner == _failedOwner && uid == _failedUser) {
+        _failedOwner = nil; _failedUser = 0; _lastFailure = nil;
+    }
+    return stopped;
 }
 - (void)invalidate:(id)owner {
+    if (owner && owner == _failedOwner) { _failedOwner = nil; _failedUser = 0; _lastFailure = nil; }
     if (owner && owner == _owner) {
         NSError *error = nil;
         if (![self stopInternal:&error]) {

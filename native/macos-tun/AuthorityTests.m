@@ -45,6 +45,12 @@ int main(int argc, const char **argv) { @autoreleasepool {
     [authority invalidate:owner]; CHECK(!authority.active); CHECK([Store sessions:NULL].count == 0);
     CHECK([authority startOwner:owner user:geteuid() create:create health:health error:NULL]);
     healthy = NO; CHECK(![authority recover:NULL]); CHECK(!authority.active); CHECK([Store sessions:NULL].count == 0); healthy = YES;
+    NSError *observedFailure = nil;
+    CHECK(![authority statusOwner:owner user:geteuid() error:&observedFailure]);
+    CHECK(observedFailure && !authority.active);
+    CHECK([[authority statusOwner:other user:geteuid() error:NULL][@"phase"] isEqual:@"stopped"]);
+    CHECK([authority stopOwner:owner user:geteuid() error:NULL]);
+    CHECK([[authority statusOwner:owner user:geteuid() error:NULL][@"phase"] isEqual:@"stopped"]);
     CHECK([authority startOwner:owner user:geteuid() create:create health:health error:NULL]);
     CHECK(!kill(session.workerPID,SIGKILL)); usleep(100000);
     CHECK(![authority statusOwner:owner user:geteuid() error:NULL]); CHECK(!authority.active); CHECK([Store sessions:NULL].count == 0);
