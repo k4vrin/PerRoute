@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import macos_helper_probe as signing
 from macos_preview import macho
-from macos_routing_bundle import stage as stage_routing, sign_payloads
+from macos_routing_bundle import stage as stage_routing, sign_payloads, enable_candidate_launch
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ROOT / 'native/macos-helper'
@@ -82,6 +82,8 @@ def build(app, *, routing=False):
         # SMAppService BundleProgram manifest from this account-free artifact.
         (contents / 'Library/LaunchDaemons/app.perroute.proxy-helper.plist').unlink(missing_ok=True)
         routing_payloads = stage_routing(staged) if routing else ()
+        if routing:
+            enable_candidate_launch(staged)
         runtime_executable = contents / 'runtime/Contents/MacOS/libjli.dylib'
         launcher = contents / 'MacOS/PerRoute'
         for binary in staged.rglob('*'):

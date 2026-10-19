@@ -6,7 +6,7 @@ import plistlib
 import tempfile
 import unittest
 from unittest.mock import patch
-from macos_routing_bundle import ROOT, stage, sign_payloads
+from macos_routing_bundle import ROOT, stage, sign_payloads, enable_candidate_launch
 
 
 class RoutingBundleTests(unittest.TestCase):
@@ -97,6 +97,40 @@ class RoutingBundleTests(unittest.TestCase):
         self.assertEqual(events[2], ('sign', 'xray', 'app.perroute.xray'))
         self.assertIn('=identifier "app.perroute.tun-engine" and certificate leaf = H"'+'A'*40+'"', events[1][1])
         self.assertIn('=identifier "app.perroute.xray" and certificate leaf = H"'+'A'*40+'"', events[3][1])
+
+    def launcher(self, text='[Application]\napp.mainclass=main\n[JavaOptions]\njava-options=-Xmx1g\n[ArgOptions]\n'):
+        config = self.contents / 'app/PerRoute.cfg'
+        config.write_text(text)
+        return config
+
+    def enable(self):
+        # Path/identity refusal has separate coverage above. Isolate the launcher edit here.
+        with patch('macos_routing_bundle.bundle_paths', return_value=(self.app, self.xray)):
+            enable_candidate_launch(self.app)
+
+    def test_candidate_launch_preserves_existing_options(self):
+        config = self.launcher()
+        before = config.read_text()
+        self.enable()
+        flag = 'java-options=-Dperroute.macos.perAppCandidate=true\n'
+        self.assertEqual(config.read_text(), before.replace('[JavaOptions]\n', '[JavaOptions]\n' + flag))
+        with self.assertRaises(ValueError): self.enable()
+
+    def test_invalid_launcher_sections_preserved(self):
+        for text in ['[Application]\n', '[JavaOptions]\n[JavaOptions]\n']:
+            config = self.launcher(text)
+            with self.assertRaises(ValueError): self.enable()
+            self.assertEqual(config.read_text(), text)
+
+    def test_aliased_launcher_preserved(self):
+        config = self.launcher()
+        foreign = self.root / 'foreign.cfg'
+        foreign.write_text(config.read_text())
+        config.unlink()
+        config.symlink_to(foreign)
+        before = foreign.read_text()
+        with self.assertRaises(ValueError): self.enable()
+        self.assertEqual(foreign.read_text(), before)
 
 
 if __name__ == '__main__':

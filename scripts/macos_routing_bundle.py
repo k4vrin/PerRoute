@@ -106,3 +106,23 @@ def sign_payloads(paths, settings, sign, verify):
         sign(binary, settings, identifier)
         requirement = f'identifier "{identifier}" and certificate leaf = H"{settings["sha1"]}"'
         verify('/usr/bin/codesign', '--verify', '--strict', '-R', '=' + requirement, binary, quiet=True)
+
+
+def enable_candidate_launch(app):
+    # Change only the disposable routing candidate, before its enclosing signature is sealed.
+    app, _ = bundle_paths(app, platform.machine())
+    config = app / 'Contents/app/PerRoute.cfg'
+    if config.parent.is_symlink() or config.is_symlink() or not config.is_file():
+        raise ValueError('Expected a real candidate launcher configuration')
+    text = config.read_text()
+    lines = text.splitlines(keepends=True)
+    if sum(line.strip() == '[JavaOptions]' for line in lines) != 1:
+        raise ValueError('Expected exactly one JavaOptions section')
+    if 'perroute.macos.perAppCandidate' in text:
+        raise ValueError('Refusing a preconfigured routing candidate flag')
+    for index, line in enumerate(lines):
+        if line.strip() == '[JavaOptions]':
+            lines[index] = line.rstrip('\r\n') + '\n'
+            lines.insert(index + 1, 'java-options=-Dperroute.macos.perAppCandidate=true\n')
+            break
+    config.write_text(''.join(lines))
