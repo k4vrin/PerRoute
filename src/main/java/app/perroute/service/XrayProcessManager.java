@@ -37,7 +37,13 @@ public final class XrayProcessManager implements AutoCloseable {
 
     public void addLogListener(Consumer<String> listener) { logListeners.add(listener); }
     public void addStateListener(Consumer<Boolean> listener) { stateListeners.add(listener); }
-    public boolean isRunning() { return process != null && process.isAlive(); }
+    public boolean isRunning() { Process current = process; return current != null && current.isAlive(); }
+    /** Snapshot only; the native helper independently verifies this process and its endpoints. */
+    public synchronized long ownedProcessId() throws IOException {
+        Process current = process;
+        if (current == null || !current.isAlive()) throw new IOException("The owned Xray process is not running");
+        return current.pid();
+    }
 
     public synchronized void start(String config) throws IOException, InterruptedException {
         start(config, false);

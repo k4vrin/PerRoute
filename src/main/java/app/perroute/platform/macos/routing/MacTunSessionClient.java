@@ -79,7 +79,8 @@ public final class MacTunSessionClient {
         if (pendingRecovery()) Files.delete(recoveryMarker);
         session = null;
     }
-    public synchronized boolean pendingRecovery() throws IOException {
+    public synchronized boolean pendingRecovery() throws IOException { return pendingRecovery(recoveryMarker); }
+    public static boolean pendingRecovery(Path recoveryMarker) throws IOException {
         try {
             var attributes = Files.readAttributes(recoveryMarker, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
             if (!attributes.isRegularFile() || attributes.size() != 1)

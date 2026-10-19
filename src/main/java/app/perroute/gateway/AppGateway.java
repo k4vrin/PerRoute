@@ -26,8 +26,8 @@ import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
 
 /**
- * A small loopback relay between the per-app driver and Xray, one listener per selected application:
- * ProxiFyre sends an application's traffic to its listener, and the gateway forwards it unchanged to that
+ * A small loopback relay between the platform routing engine and Xray, one listener per selected application:
+ * The platform sends an application's traffic to its listener, and the gateway forwards it unchanged to that
  * application's own Xray inbound. Because every connection of an application passes the same listener, the
  * gateway can enforce one shared download and upload limit per application and see each connection's
  * destination and byte counts. It understands just enough SOCKS5 to read the destination and to carry UDP
@@ -39,9 +39,13 @@ public final class AppGateway implements AutoCloseable {
     /** Upper bound of simultaneous connections per application, so memory stays bounded. */
     public static final int MAX_CONNECTIONS_PER_APP = 4_096;
     static final int BUFFER_SIZE = 16 * 1024;
-    private static final InetAddress LOOPBACK = InetAddress.getLoopbackAddress();
+    private static final InetAddress LOOPBACK = ipv4Loopback();
+    private static InetAddress ipv4Loopback() {
+        try { return InetAddress.getByAddress(new byte[]{127,0,0,1}); }
+        catch (java.net.UnknownHostException impossible) { throw new ExceptionInInitializerError(impossible); }
+    }
 
-    /** One application: the port ProxiFyre uses and the Xray inbound behind it. */
+    /** One application: the port the platform routing engine uses and the Xray inbound behind it. */
     public record Route(String applicationPath, int applicationIndex, int listenPort, int upstreamPort) {}
 
     /** Totals of one application since the gateway started. */
@@ -128,7 +132,7 @@ public final class AppGateway implements AutoCloseable {
         return channel == null ? new Counters(0, 0, 0, 0) : channel.counters();
     }
 
-    private static String key(String path) { return path == null ? "" : path.toLowerCase(java.util.Locale.ROOT); }
+    private static String key(String path) { return path == null ? "" : app.perroute.model.ApplicationIdentity.comparisonKey(path); }
 
     /** The listener, limiters and live connections of one application. */
     private final class Channel {

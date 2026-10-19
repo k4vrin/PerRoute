@@ -727,3 +727,13 @@ tasks.register<JavaExec>("runApplicationIdentityTests") {
     mainClass.set("app.perroute.ApplicationIdentityTests")
     enableAssertions = true
 }
+
+// Actual loopback Xray/gateway exercise; the privileged helper is simulated and never activates capture.
+tasks.register<JavaExec>("runMacosPerAppBackendTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.MacPerAppBackendTests")
+    systemProperty("perroute.portOffset", "25000")
+    args(layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
+    enableAssertions = true
+}

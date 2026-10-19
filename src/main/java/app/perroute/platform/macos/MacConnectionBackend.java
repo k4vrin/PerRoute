@@ -11,6 +11,11 @@ import app.perroute.service.XrayProcessManager;
 import app.perroute.service.XrayRuntime;
 import app.perroute.service.XrayStatsReader;
 import java.nio.file.Path;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.concurrent.CopyOnWriteArrayList;
+import app.perroute.platform.macos.routing.MacPerAppRouting;
+import app.perroute.platform.macos.routing.MacTunSessionClient;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -18,6 +23,11 @@ import java.util.function.Consumer;
 /** Owns its local Xray child and an optional, explicitly wired system-proxy lifecycle. */
 public final class MacConnectionBackend implements ConnectionBackend, StartupRecovery {
     private final BackendCapabilities capabilities;
+    private final List<Consumer<String>> logs = new CopyOnWriteArrayList<>();
+    private final List<Consumer<GatewayConnection>> connections = new CopyOnWriteArrayList<>();
+    private final AppGateway gateway = new AppGateway(value -> connections.forEach(listener -> listener.accept(value)),
+            line -> logs.forEach(listener -> listener.accept(line)));
+    private final MacPerAppRouting perApp;
     private final app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy;
     private final XrayRuntime runtime;
     private final XrayProcessManager process;
@@ -29,9 +39,16 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
     }
     public MacConnectionBackend(XrayRuntime runtime, Path data, boolean persistent,
                                 app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy) {
+        this(runtime,data,persistent,systemProxy,null);
+    }
+    public MacConnectionBackend(XrayRuntime runtime, Path data, boolean persistent,
+            app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy, MacTunSessionClient session) {
+        if (session != null && (!persistent || systemProxy == null))
+            throw new IllegalArgumentException("Per-app routing requires durable state and proxy recovery");
+        perApp = session == null ? null : new MacPerAppRouting(session,gateway);
         if (systemProxy != null && !persistent) throw new IllegalArgumentException("System proxy requires durable recovery state");
         this.systemProxy = systemProxy;
-        capabilities = systemProxy != null ? BackendCapabilities.macosSystemProxy()
+        capabilities = perApp != null ? BackendCapabilities.macosPerApp() : systemProxy != null ? BackendCapabilities.macosSystemProxy()
                 : persistent ? BackendCapabilities.macosLocal() : BackendCapabilities.macosLocalPreview();
         if (runtime.target() == XrayRuntime.Target.WINDOWS_X64) throw new IllegalArgumentException("Darwin runtime required");
         this.runtime = runtime;
@@ -41,13 +58,27 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
     @Override public boolean coreReady() {
         try { runtime.requireExecutable(false); return true; } catch (java.io.IOException error) { return false; }
     }
-    @Override public boolean perAppReady() { return false; }
+    @Override public boolean perAppReady() { return perApp != null && coreReady(); }
+    @Override public boolean requiresPerAppGateway() { return perApp != null; }
+    @Override public boolean supportsPerAppKillSwitch() { return false; }
+    @Override public String perAppReadinessMessage() { return "Install the matching signed PerRoute app, routing engine and background helper before using per-app mode."; }
+    @Override public void prepareConnection() throws Exception {
+        if (perApp != null) perApp.restore();
+    }
     @Override public boolean elevated() { return false; }
     @Override public void validate(String config, boolean tun) throws Exception { process.validate(config, tun); }
-    @Override public void start(String config, boolean tun) throws Exception { process.start(config, tun); }
-    @Override public void stop() { process.stop(); }
+    @Override public void start(String config, boolean tun) throws Exception {
+        process.start(config,tun);
+        try { if (perApp != null) perApp.coreStarted(process.ownedProcessId()); }
+        catch (Exception failure) { process.stop(); throw failure; }
+    }
+    @Override public void stop() throws Exception {
+        if (perApp != null) perApp.coreStopping();
+        process.stop();
+        if (process.isRunning()) throw new IOException("The owned Xray process remains tracked; retry Disconnect before reconnecting");
+    }
     @Override public boolean isRunning() { return process.isRunning(); }
-    @Override public void addLogListener(Consumer<String> listener) { process.addLogListener(listener); }
+    @Override public void addLogListener(Consumer<String> listener) { logs.add(listener); process.addLogListener(listener); }
     @Override public void addRunningListener(Consumer<Boolean> listener) { process.addStateListener(listener); }
     @Override public TunnelStatus checkTunnel(int port) {
         var result = new ProxyHealthCheck().check("127.0.0.1", port);
@@ -57,18 +88,30 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
     @Override public RouteObservation lookupPublicAddress(Integer port) { return diagnostics.lookupPublicAddress(port); }
     @Override public List<String> systemDnsServers() { return diagnostics.systemDnsServers(); }
     @Override public String publicResolver() { return diagnostics.publicResolver(); }
-    @Override public void stopGateway() { /* This adapter never owns a gateway. */ }
-    @Override public boolean gatewayRunning() { return false; }
-    @Override public Map<String, AppGateway.Counters> gatewayCounters() { return Map.of(); }
-    @Override public void addGatewayListener(Consumer<GatewayConnection> listener) { }
-    @Override public void startGateway(List<AppGateway.Route> routes) { throw unavailable("Per-app gateway"); }
-    @Override public void setGatewayLimits(String path, long down, long up) { throw unavailable("Per-app limits"); }
-    @Override public void applyRuntimeChange(XrayConfigGenerator.RuntimeChange change, String newTag, String oldTag, String config) {
-        throw unavailable("Live route replacement"); // The existing controller falls back to an owned-core restart.
+    @Override public void stopGateway() {
+        if (perApp == null) return;
+        try { perApp.stopGateway(); } catch (IOException failure) { throw new UncheckedIOException(failure); }
+    }
+    @Override public boolean gatewayRunning() { return gateway.running(); }
+    @Override public Map<String, AppGateway.Counters> gatewayCounters() { return gateway.counters(); }
+    @Override public void addGatewayListener(Consumer<GatewayConnection> listener) { connections.add(listener); }
+    @Override public void startGateway(List<AppGateway.Route> routes) throws Exception {
+        if (perApp == null) throw unavailable("Per-app gateway");
+        for (var route : routes) restoreApplication(route.applicationPath());
+        perApp.startGateway(routes);
+    }
+    @Override public void setGatewayLimits(String path, long down, long up) {
+        if (perApp == null) throw unavailable("Per-app limits");
+        gateway.setLimits(path,down,up);
+    }
+    @Override public void applyRuntimeChange(XrayConfigGenerator.RuntimeChange change, String newTag, String oldTag, String config) throws Exception {
+        if (perApp == null) throw unavailable("Live route replacement");
+        process.applyRuntimeChange(change.outbounds(),change.routing(),newTag,oldTag,config);
     }
     @Override public void stopOrphan() { throw unavailable("Orphan process recovery"); }
     @Override public void applySystemProxy() throws Exception {
         if (systemProxy == null) throw unavailable("System proxy");
+        if (perApp != null) perApp.restore();
         if (!process.isRunning()) throw new java.io.IOException("The owned proxy engine must be running before applying system settings");
         for (int port : new int[]{app.perroute.service.AppProxyLauncher.HTTP_PORT, app.perroute.service.AppProxyLauncher.SOCKS_PORT}) {
             try (var socket = new java.net.Socket()) {
@@ -88,9 +131,21 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
     @Override public void verifySystemProxySession() throws Exception {
         if (systemProxy != null) systemProxy.verifySession();
     }
-    @Override public void applyPerApp(List<String> apps) { throw unavailable("Per-app routing"); }
-    @Override public void restorePerApp() { throw unavailable("Per-app recovery"); }
-    @Override public void stopPerAppSidecar() { throw unavailable("Per-app sidecar"); }
+    @Override public void applyPerApp(List<String> apps) throws Exception {
+        if (perApp == null) throw unavailable("Per-app routing");
+        for (String app : apps) restoreApplication(app);
+        systemProxy.restore();
+        perApp.apply(apps,process.ownedProcessId());
+    }
+    @Override public void restorePerApp() throws IOException {
+        if (perApp == null) throw unavailable("Per-app recovery");
+        perApp.restore();
+    }
+    @Override public void stopPerAppSidecar() throws IOException { restorePerApp(); }
+    @Override public void verifyPerAppSession() throws IOException {
+        if (perApp == null) throw unavailable("Per-app session");
+        perApp.verify();
+    }
     @Override public String selectApplication(String path) throws java.io.IOException {
         String raw = ApplicationIdentity.path(path);
         if (raw == null || !raw.startsWith("/")) throw new java.io.IOException("Select a macOS executable from the application list.");

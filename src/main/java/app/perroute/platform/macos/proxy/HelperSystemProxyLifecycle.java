@@ -35,27 +35,44 @@ public final class HelperSystemProxyLifecycle implements MacSystemProxyLifecycle
         this.readback = new StableProxyReadback(inspector);
     }
 
+    /** Both lifecycles share one authenticated native connection; neither starts routing during construction. */
+    public record RoutingServices(MacSystemProxyLifecycle systemProxy,
+            app.perroute.platform.macos.routing.MacTunSessionClient perApp) { }
+
     public static MacSystemProxyLifecycle preferred(ProxyJournal journal, Path recoveryMarker) throws IOException {
+        return preferredServices(journal,recoveryMarker).systemProxy();
+    }
+    public static RoutingServices preferredServices(ProxyJournal journal, Path recoveryMarker) throws IOException {
         var legacy = new MacSystemProxyService(journal);
+        Path tunMarker = recoveryMarker.resolveSibling("helper-tun.pending");
         String resources = System.getProperty("compose.application.resources.dir");
-        if (resources == null || resources.isBlank()) return directDevelopment(legacy, recoveryMarker);
-        // ServiceManagement's authenticated XPC registration API is available starting with macOS 13.
+        if (resources == null || resources.isBlank()) return directDevelopment(legacy,recoveryMarker,tunMarker);
         String major = System.getProperty("os.version", "0").split("\\.")[0];
-        try { if (Integer.parseInt(major) < 13) return directDevelopment(legacy, recoveryMarker); }
+        try { if (Integer.parseInt(major) < 13) return directDevelopment(legacy,recoveryMarker,tunMarker); }
         catch (NumberFormatException failure) { throw new IOException("Cannot determine macOS helper availability", failure); }
         Path library = Path.of(resources).resolve("../../Frameworks/libPerRouteProxyBridge.dylib").normalize();
-        if (!Files.isRegularFile(library)) return directDevelopment(legacy, recoveryMarker);
+        if (!Files.isRegularFile(library)) return directDevelopment(legacy,recoveryMarker,tunMarker);
         var client = new NativeClient(library);
-        // Unsigned development keeps the existing OS-authorization writer. Once a signed container
-        // selects the helper, denial or revocation must fail visibly rather than fall back to prompts.
-        if (!Boolean.TRUE.equals(client.request("availability", Map.of()).get("managed"))) return directDevelopment(legacy, recoveryMarker);
-        return new HelperSystemProxyLifecycle(legacy, client, new MacNetworkServiceInspector()::inspect, new FileMarker(recoveryMarker));
+        if (!Boolean.TRUE.equals(client.request("availability", Map.of()).get("managed")))
+            return directDevelopment(legacy,recoveryMarker,tunMarker);
+        var proxy = new HelperSystemProxyLifecycle(legacy,client,new MacNetworkServiceInspector()::inspect,new FileMarker(recoveryMarker));
+        Path engine = Path.of(resources).resolve("../../Library/Engines/sing-box").normalize();
+        // Bundle presence enables composition, not trust or readiness. Native start independently
+        // verifies payload signatures, architecture-matched Xray and actual listener ownership.
+        if (Boolean.getBoolean("perroute.macos.perAppCandidate") && Files.isRegularFile(engine) && Files.isExecutable(engine))
+            return new RoutingServices(proxy,new app.perroute.platform.macos.routing.MacTunSessionClient(client,tunMarker));
+        requireNoTunRecovery(tunMarker);
+        return new RoutingServices(proxy,null);
     }
-
-    private static MacSystemProxyLifecycle directDevelopment(MacSystemProxyLifecycle legacy, Path marker) throws IOException {
+    private static void requireNoTunRecovery(Path marker) throws IOException {
+        if (app.perroute.platform.macos.routing.MacTunSessionClient.pendingRecovery(marker))
+            throw new IOException("Per-app recovery is pending. Reopen the matching PerRoute routing installation before using this build.");
+    }
+    private static RoutingServices directDevelopment(MacSystemProxyLifecycle legacy, Path marker, Path tunMarker) throws IOException {
+        requireNoTunRecovery(tunMarker);
         if (new FileMarker(marker).exists())
             throw new IOException("Proxy helper recovery is pending. Reopen the signed PerRoute installation and enable its background service before using this development build.");
-        return legacy;
+        return new RoutingServices(legacy,null);
     }
 
     @Override public synchronized void apply() throws Exception {

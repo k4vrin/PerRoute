@@ -147,7 +147,9 @@ internal fun RoutingSettings(shell: Shell) {
         Spacer(Modifier.height(14.dp))
         FieldLabel("Traffic gateway")
         Column(Modifier.alpha(if (shell.locked) .75f else 1f)) {
-            FeatureToggleRow(Icons.Rounded.AltRoute, "Carry per-app traffic through the PerRoute gateway",
+            if (controller.perAppGatewayRequired()) {
+                InfoBanner("The traffic gateway is required for macOS per-app routing and stays enabled. It also provides bandwidth limits and connection counters.", Modifier.fillMaxWidth())
+            } else FeatureToggleRow(Icons.Rounded.AltRoute, "Carry per-app traffic through the PerRoute gateway",
                 "Needed for bandwidth limits, and for byte counts and open/closed state in the connection inspector. It relays each app's " +
                     "connections to its own core inbound on this computer and never reads their contents. Smart per-app only.", gateway) { on ->
                 val result = controller.setTrafficGateway(on)

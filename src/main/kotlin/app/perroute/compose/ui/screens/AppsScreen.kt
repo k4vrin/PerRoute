@@ -160,6 +160,7 @@ internal fun AppsScreen(shell: Shell) {
     var running by remember { mutableStateOf<List<AppChoice>>(emptyList()) }
     var installed by remember { mutableStateOf<List<AppChoice>>(emptyList()) }
     val locked = shell.locked
+    val macRouting = shell.controller.perAppGatewayRequired()
     val dirty = draft.dirty(shell)
 
     fun refreshApplications(forceRefresh: Boolean = false) {
@@ -205,6 +206,7 @@ internal fun AppsScreen(shell: Shell) {
                 GlassCard(Modifier.weight(1f).fillMaxHeight()) {
                     Column(Modifier.fillMaxSize().padding(15.dp)) {
                         Text("Applications", color = White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        if (macRouting) InfoBanner("Candidate: selected executable TCP/IPv4 traffic. Select separate helper executables when needed. UDP, IPv6 and DNS coverage are not established.", Modifier.fillMaxWidth())
                         Text(if (draft.advanced) "Select apps, then choose how each one picks its server." else "Select the apps that should use the proxy.",
                             color = Muted, fontSize = 11.sp)
                         Spacer(Modifier.height(10.dp))
@@ -254,11 +256,11 @@ internal fun AppsScreen(shell: Shell) {
                                 // Rows are only shown once discovery is done, so the list never reorders under the pointer.
                                 loading -> LoadingState("Looking for applications…", Modifier.fillMaxSize())
                                 filtered.isEmpty() && query.isNotBlank() -> EmptyState(Icons.Rounded.SearchOff, "No applications match \"$query\"",
-                                    "Try another name, switch between installed and running apps, or browse for the EXE.", Modifier.fillMaxSize()) {
+                                    "Try another name, switch between installed and running apps, or browse for the executable.", Modifier.fillMaxSize()) {
                                     SecondaryButton("Clear search") { query = "" }
                                 }
                                 filtered.isEmpty() -> EmptyState(Icons.Rounded.Apps, "No applications found",
-                                    if (source == AppListSource.RUNNING) "Start the application first, or pick it from installed apps." else "Browse for the EXE to add an application manually.",
+                                    if (source == AppListSource.RUNNING) "Start the application first, or pick it from installed apps." else "Browse for the executable to add an application manually.",
                                     Modifier.fillMaxSize()) { SecondaryButton("Refresh", icon = Icons.Rounded.Refresh) { refreshApplications(true) } }
                                 else -> LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(7.dp)) {
                                     items(filtered, key = { ApplicationIdentity.comparisonKey(it.path) }) { app ->
@@ -289,10 +291,10 @@ internal fun AppsScreen(shell: Shell) {
                         color = if (dirty && !locked) Amber else Muted, fontSize = 10.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                 }
-                SecondaryButton("Browse for an EXE", icon = Icons.Rounded.FolderOpen, enabled = !locked) {
+                SecondaryButton(if (macRouting) "Browse for an executable" else "Browse for an EXE", icon = Icons.Rounded.FolderOpen, enabled = !locked) {
                     val owner = shell.hostWindow ?: return@SecondaryButton
                     val dialog = FileDialog(owner, "Choose application", FileDialog.LOAD).apply {
-                        filenameFilter = java.io.FilenameFilter { _, name -> name.endsWith(".exe", true) }
+                        if (!macRouting) filenameFilter = java.io.FilenameFilter { _, name -> name.endsWith(".exe", true) }
                         isVisible = true
                     }
                     val file = dialog.file

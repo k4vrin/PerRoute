@@ -36,6 +36,15 @@ public final class PlatformBootstrap {
         return new PlatformServices(backend, backend);
     }
 
+    public static PlatformServices forMac(Path runtimeDirectory,
+            app.perroute.platform.macos.proxy.HelperSystemProxyLifecycle.RoutingServices services) {
+        if (!isMac(System.getProperty("os.name"))) throw new UnsupportedOperationException("macOS lifecycle requires macOS");
+        var runtime = app.perroute.service.XrayRuntime.forPlatform(System.getProperty("os.name"),System.getProperty("os.arch"),AppDirectories.coreDirectory());
+        var backend = new app.perroute.platform.macos.MacConnectionBackend(runtime,runtimeDirectory,true,
+                java.util.Objects.requireNonNull(services.systemProxy()),services.perApp());
+        return new PlatformServices(backend,backend);
+    }
+
     public static boolean isMac(String name) {
         String os = name == null ? "" : name.trim().toLowerCase(Locale.ROOT);
         return os.equals("mac os x") || os.equals("darwin");

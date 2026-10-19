@@ -21,12 +21,12 @@ public final class MacStateSession implements AutoCloseable {
     private final AppStateStore store;
     private final AppState state;
     private final EncryptedPreferences preferences;
-    private final app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy;
+    private final app.perroute.platform.macos.proxy.HelperSystemProxyLifecycle.RoutingServices routingServices;
     private boolean closed;
     private MacStateSession(SingleInstanceLock lock, MacStateCipher cipher, AppStateStore store,
                             AppState state, EncryptedPreferences preferences, Path recoveryFile) throws IOException {
         this.lock = lock; this.cipher = cipher; this.store = store; this.state = state; this.preferences = preferences;
-        systemProxy = app.perroute.platform.macos.proxy.HelperSystemProxyLifecycle.preferred(
+        routingServices = app.perroute.platform.macos.proxy.HelperSystemProxyLifecycle.preferredServices(
                 new app.perroute.platform.macos.proxy.EncryptedProxyJournal(recoveryFile, cipher), recoveryFile.resolveSibling("helper-proxy.pending"));
     }
     public static MacStateSession openDefault() throws IOException { return openDefault(false); }
@@ -92,7 +92,8 @@ public final class MacStateSession implements AutoCloseable {
             return "state-" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(directory.toAbsolutePath().normalize().toString().getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
-    public app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy() { return systemProxy; }
+    public app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy() { return routingServices.systemProxy(); }
+    public app.perroute.platform.macos.proxy.HelperSystemProxyLifecycle.RoutingServices routingServices() { return routingServices; }
     public AppStateStore store() { return store; }
     public AppState state() { return state; }
     public EncryptedPreferences preferences() { return preferences; }

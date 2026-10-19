@@ -11,6 +11,10 @@ public record BackendCapabilities(Set<ConnectionMode> modes, boolean coreInstall
     public static BackendCapabilities windows() {
         return new BackendCapabilities(Set.of(ConnectionMode.values()), true, true, true, true, true, true);
     }
+    public static BackendCapabilities macosPerApp() {
+        return new BackendCapabilities(Set.of(ConnectionMode.BROWSER_PROXY, ConnectionMode.SYSTEM_PROXY,
+                ConnectionMode.NATIVE_PER_APP), false, false, true, false, true, false);
+    }
     public static BackendCapabilities macosSystemProxy() {
         return new BackendCapabilities(Set.of(ConnectionMode.BROWSER_PROXY, ConnectionMode.SYSTEM_PROXY), false, false, true, false, true, false);
     }

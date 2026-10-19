@@ -265,7 +265,7 @@ private fun ConnectionSettings(shell: Shell) {
             ConnectionMode.values().filter { it != ConnectionMode.TUN_COMPATIBILITY }.forEach { mode ->
                 val supported = shell.controller.capabilities().supports(mode)
                 val driverMissing = supported && mode == ConnectionMode.NATIVE_PER_APP && environment?.perAppReady == false
-                ModeRow(mode, mode == shell.mode, supported && !locked && !driverMissing && !shell.busy, driverMissing, supported) {
+                ModeRow(mode, mode == shell.mode, supported && !locked && !driverMissing && !shell.busy, driverMissing, supported, shell.controller.perAppGatewayRequired()) {
                     shell.controller.setMode(mode)
                     shell.refresh()
                 }
@@ -303,7 +303,7 @@ private fun ConnectionSettings(shell: Shell) {
 
 /** One connection mode as a radio row. */
 @Composable
-private fun ModeRow(mode: ConnectionMode, selected: Boolean, enabled: Boolean, driverMissing: Boolean, supported: Boolean, onClick: () -> Unit) {
+private fun ModeRow(mode: ConnectionMode, selected: Boolean, enabled: Boolean, driverMissing: Boolean, supported: Boolean, macRouting: Boolean, onClick: () -> Unit) {
     val (title, detail) = when (mode) {
         ConnectionMode.NATIVE_PER_APP -> "Smart per-app" to "Only selected apps use the proxy"
         ConnectionMode.BROWSER_PROXY -> "Local proxy" to "Set a SOCKS5 or HTTP proxy inside individual apps"
@@ -328,7 +328,8 @@ private fun ModeRow(mode: ConnectionMode, selected: Boolean, enabled: Boolean, d
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
             Text(title, color = White, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-            Text(if (!supported) "Unavailable on macOS." else if (driverMissing) "Needs the per-app driver from the Full Installer. See Components." else detail,
+            Text(if (!supported) "Unavailable on macOS." else if (driverMissing) { if (macRouting) "Needs the matching routing app, Xray and helper. See Components." else "Needs the per-app driver from the Full Installer. See Components." }
+                else if (macRouting && mode == ConnectionMode.NATIVE_PER_APP) "Candidate: selected executable TCP traffic over IPv4" else detail,
                 color = if (driverMissing) Amber else Muted, fontSize = 10.5.sp)
         }
         RadioMark(selected)
@@ -352,7 +353,7 @@ private fun AutomationSettings(shell: Shell) {
             FeatureToggleRow(Icons.Rounded.SwapHoriz, "Main server failover", "After three failed checks, switch the main server to the fastest reachable one.", autoFailover) {
                 autoFailover = it; controller.setAutoFailover(it)
             }
-            if (controller.capabilities().perApp()) FeatureToggleRow(Icons.Rounded.Shield, "Per-app kill switch", "Block selected apps while their tunnel is unavailable.", killSwitch) {
+            if (controller.capabilities().perApp() && controller.perAppKillSwitchSupported()) FeatureToggleRow(Icons.Rounded.Shield, "Per-app kill switch", "Block selected apps while their tunnel is unavailable.", killSwitch) {
                 killSwitch = it; controller.setKillSwitch(it)
             }
             FeatureToggleRow(Icons.Rounded.Speed, "Fastest main server on connect", "Measure reachable servers and use the lowest latency as the main server before connecting.", fastestOnConnect) {
@@ -473,14 +474,17 @@ private fun ComponentSettings(shell: Shell) {
                     controller.installCore { update -> EventQueue.invokeLater { progress = update } }
                 }
             }
-            if (controller.capabilities().perApp()) EnvironmentRow(Icons.Rounded.Shield, "Per-app driver", "Routes arbitrary applications in Smart per-app mode", state.perAppReady, null, false) {}
+            if (controller.capabilities().perApp()) EnvironmentRow(Icons.Rounded.Shield,
+                if (controller.perAppGatewayRequired()) "Per-app routing candidate" else "Per-app driver",
+                if (controller.perAppGatewayRequired()) "Bundled components; helper trust and ownership are checked on Connect" else "Routes arbitrary applications in Smart per-app mode",
+                state.perAppReady, null, false) {}
         }
         if (progress.isNotBlank()) {
             Spacer(Modifier.height(8.dp))
             Text(progress, color = Amber, fontSize = 11.sp)
         }
         Spacer(Modifier.height(9.dp))
-        InfoBanner(if (controller.capabilities().perApp()) "The Full Installer sets up the per-app driver with a single Administrator approval. After that PerRoute connects without asking again. The portable build can reuse an existing driver installation." else "Local preview uses a matching Darwin Xray binary from the app resources or tools/xray/macos-arm64 or macos-x64. Automatic installation and per-app routing are unavailable.",
+        InfoBanner(if (controller.perAppGatewayRequired()) "This macOS candidate requires the matching signed routing app and background helper. First setup may request administrator approval. Selected executable TCP/IPv4 traffic uses the gateway; UDP, IPv6, DNS protection and a kill switch are not established." else if (controller.capabilities().perApp()) "The Full Installer sets up the per-app driver with a single Administrator approval. After that PerRoute connects without asking again. The portable build can reuse an existing driver installation." else "Local preview uses a matching Darwin Xray binary from the app resources or tools/xray/macos-arm64 or macos-x64. Automatic installation and per-app routing are unavailable.",
             Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
         SecondaryButton("Check again", icon = Icons.Rounded.Refresh) { scope.launch { environment = null; reload() } }

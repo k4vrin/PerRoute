@@ -15,6 +15,12 @@ public interface ConnectionBackend {
     boolean coreReady();
     boolean perAppReady();
     boolean elevated();
+    default boolean requiresPerAppGateway() { return false; }
+    default boolean supportsPerAppKillSwitch() { return true; }
+    default String perAppReadinessMessage() { return "Smart per-app needs the bundled Windows driver. Reinstall PerRoute with the Full Installer and approve its single UAC prompt, or choose Local proxy/System proxy."; }
+    /** Recover previous platform routing custody before a new explicit connection, without approval prompts. */
+    default void prepareConnection() throws Exception { }
+    default void verifyPerAppSession() throws Exception { }
 
     /** Reject an invalid configuration without changing the running core. */
     void validate(String config, boolean tun) throws Exception;

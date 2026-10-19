@@ -445,7 +445,7 @@ fun main(args: Array<String>) {
 
 private fun runDesktop(args: Array<String>, preview: app.perroute.platform.macos.MacPreviewSession?, storage: app.perroute.platform.macos.MacStateSession?) {
     val platform = try {
-        if (preview != null && storage != null) PlatformBootstrap.forMac(preview.directory(), storage.systemProxy())
+        if (preview != null && storage != null) PlatformBootstrap.forMac(preview.directory(), storage.routingServices())
         else if (preview != null) PlatformBootstrap.forOs(System.getProperty("os.name"), preview.directory())
         else PlatformBootstrap.create()
     } catch (error: UnsupportedOperationException) {
