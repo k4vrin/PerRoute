@@ -97,6 +97,28 @@ NSDictionary *PRTunNetworkBaseline(NSError **error) {
     }
     return @{@"primary":primary,@"index":@(index)};
 }
+BOOL PRTunRoutesCoverCaptureRange(NSArray<NSDictionary *> *routes, unsigned index) {
+    if (!index) return NO;
+    NSArray *ordered = [routes sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *left, NSDictionary *right) {
+        return [left[@"network"] compare:right[@"network"]];
+    }];
+    // The pinned Darwin engine excludes 0/8 and partitions the remaining address
+    // space into eight prefixes. Verify coverage, not one particular route layout.
+    uint64_t covered = 0x01000000ULL, limit = 0x100000000ULL;
+    for (NSDictionary *route in ordered) {
+        unsigned flags = [route[@"flags"] unsignedIntValue];
+        if ([route[@"index"] unsignedIntValue] != index || !(flags&RTF_UP) ||
+            (flags&(RTF_IFSCOPE|RTF_HOST|RTF_REJECT|RTF_BLACKHOLE))) continue;
+        uint32_t mask = [route[@"mask"] unsignedIntValue];
+        uint64_t begin = [route[@"network"] unsignedIntValue];
+        uint64_t end = begin+(uint64_t)(uint32_t)~mask+1;
+        if (end <= covered) continue;
+        if (begin > covered) return NO;
+        covered = end;
+        if (covered >= limit) return YES;
+    }
+    return NO;
+}
 BOOL PRTunNetworkReady(NSDictionary *baseline, NSError **error) {
     NSString *primary = Primary();
     if (![primary isEqual:baseline[@"primary"]] || if_nametoindex(primary.UTF8String) != [baseline[@"index"] unsignedIntValue]) {
@@ -114,14 +136,5 @@ BOOL PRTunNetworkReady(NSDictionary *baseline, NSError **error) {
     if (!address) { Reject(error,@"The tunnel interface has unexpected state"); return NO; }
     NSArray *routes = PRTunReadRoutes(error);
     if (!routes) return NO;
-    BOOL first = NO, second = NO;
-    for (NSDictionary *route in routes) {
-        if ([route[@"index"] unsignedIntValue] != index || !([route[@"flags"] unsignedIntValue]&RTF_UP) ||
-            ([route[@"flags"] unsignedIntValue]&RTF_IFSCOPE)) continue;
-        uint32_t mask = [route[@"mask"] unsignedIntValue], network = [route[@"network"] unsignedIntValue];
-        if (!mask) { first = YES; second = YES; }
-        if (mask == 0x80000000U && network == 0) first = YES;
-        if (mask == 0x80000000U && network == 0x80000000U) second = YES;
-    }
-    return first && second;
+    return PRTunRoutesCoverCaptureRange(routes,index);
 }

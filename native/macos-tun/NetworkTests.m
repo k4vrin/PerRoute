@@ -11,7 +11,39 @@ static NSMutableData *Route(uint32_t network, uint32_t mask) {
     NSMutableData *bytes = [NSMutableData dataWithBytes:&header length:sizeof(header)];
     [bytes appendBytes:&destination length:sizeof(destination)]; [bytes appendBytes:&netmask length:sizeof(netmask)]; return bytes;
 }
+static NSDictionary *CaptureRoute(uint32_t network, uint32_t mask, unsigned index, unsigned flags) {
+    return @{@"network":@(network),@"mask":@(mask),@"index":@(index),@"flags":@(flags)};
+}
+static void CaptureCoverage(void) {
+    CHECK(PRTunRoutesCoverCaptureRange(@[CaptureRoute(0,0,17,RTF_UP)],17));
+    CHECK(PRTunRoutesCoverCaptureRange(@[CaptureRoute(0x80000000U,0x80000000U,17,RTF_UP),
+        CaptureRoute(0,0x80000000U,17,RTF_UP)],17));
+    NSMutableArray *engine = [NSMutableArray array];
+    for (unsigned bit=24;bit<32;bit++) {
+        uint32_t begin = 1U<<bit, mask = ~(begin-1U);
+        [engine addObject:CaptureRoute(begin,mask,17,RTF_UP)];
+    }
+    CHECK(PRTunRoutesCoverCaptureRange(engine,17));
+    CHECK(!PRTunRoutesCoverCaptureRange(engine,0));
+    CHECK(!PRTunRoutesCoverCaptureRange(engine,18));
+    CHECK(!PRTunRoutesCoverCaptureRange(@[],17));
+    for (NSUInteger i=0;i<engine.count;i++) {
+        NSMutableArray *gap = [engine mutableCopy]; [gap removeObjectAtIndex:i];
+        CHECK(!PRTunRoutesCoverCaptureRange(gap,17));
+        for (NSNumber *badFlag in @[@0,@(RTF_UP|RTF_IFSCOPE),@(RTF_UP|RTF_HOST),@(RTF_UP|RTF_REJECT),@(RTF_UP|RTF_BLACKHOLE)]) {
+            gap = [engine mutableCopy]; NSMutableDictionary *bad = [gap[i] mutableCopy]; bad[@"flags"] = badFlag; gap[i] = bad;
+            CHECK(!PRTunRoutesCoverCaptureRange(gap,17));
+        }
+        gap = [engine mutableCopy]; NSMutableDictionary *wrong = [gap[i] mutableCopy]; wrong[@"index"] = @18; gap[i] = wrong;
+        CHECK(!PRTunRoutesCoverCaptureRange(gap,17));
+    }
+    [engine addObject:CaptureRoute(0x01000000U,0xffffffffU,17,RTF_UP|RTF_HOST)];
+    CHECK(PRTunRoutesCoverCaptureRange(engine,17));
+    CHECK(!PRTunRoutesCoverCaptureRange(@[CaptureRoute(0,0x80000000U,17,RTF_UP)],17));
+    CHECK(!PRTunRoutesCoverCaptureRange(@[CaptureRoute(0x80000000U,0x80000000U,17,RTF_UP)],17));
+}
 int main(void) { @autoreleasepool {
+    CaptureCoverage();
     NSError *error = nil;
     NSArray *actual = PRTunReadRoutes(&error);
     if (!actual) fprintf(stderr,"route read error: %s\n",error.description.UTF8String);
