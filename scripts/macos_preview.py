@@ -57,7 +57,7 @@ def validate(app, architecture, inspect=architectures):
                 contents / 'Frameworks/libPerRouteDesktopBridge.dylib',
                 contents / 'Library/LaunchDaemons/app.perroute.proxy-helper.plist',
                 contents / 'Resources/PerRoute.icns', contents / 'app/resources/LICENSE',
-                contents / 'app/resources/THIRD_PARTY_NOTICES.md']
+                contents / 'app/resources/THIRD_PARTY_NOTICES.md', contents / 'MacOS/PerRouteCoreSupervisor']
     for path in required:
         if not path.is_file() or path.is_symlink():
             raise ValueError(f'Missing or aliased required component: {path.relative_to(root)}')
@@ -75,7 +75,7 @@ def validate(app, architecture, inspect=architectures):
             binaries.append(path)
     if not macho(required[1]):
         raise ValueError('The bundled JVM library is missing or invalid')
-    for executable in [required[0], engine, required[3]]:
+    for executable in [required[0], engine, required[3], required[-1]]:
         if not macho(executable) or not os.access(executable, os.X_OK):
             raise ValueError('Required native executable is missing or not executable')
     if inspect(engine) != {architecture}:

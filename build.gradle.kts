@@ -449,6 +449,15 @@ tasks.register<JavaExec>("runMacosHelperMaintenanceTests") {
     enableAssertions = true
 }
 
+val buildMacosCoreSupervisor = tasks.register<Exec>("buildMacosCoreSupervisor") {
+    inputs.file("native/macos-core/CoreSupervisor.c")
+    outputs.file(layout.buildDirectory.file("macos-core/PerRouteCoreSupervisor"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { layout.buildDirectory.dir("macos-core").get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-Wall", "-Wextra", "-Werror", "-arch", "arm64", "-arch", "x86_64",
+        "-mmacosx-version-min=13.0", "native/macos-core/CoreSupervisor.c", "-o",
+        layout.buildDirectory.file("macos-core/PerRouteCoreSupervisor").get().asFile.absolutePath)
+}
 val buildMacosDesktopBridge = tasks.register<Exec>("buildMacosDesktopBridge") {
     inputs.dir("native/macos-desktop")
     outputs.file(layout.buildDirectory.file("macos-desktop/libPerRouteDesktopBridge.dylib"))
@@ -460,9 +469,13 @@ val buildMacosDesktopBridge = tasks.register<Exec>("buildMacosDesktopBridge") {
 }
 tasks.matching { it.name == "createDistributable" }.configureEach {
     if (System.getProperty("os.name") == "Mac OS X") {
-        dependsOn(buildMacosDesktopBridge)
-        inputs.files(buildMacosDesktopBridge)
+        dependsOn(buildMacosDesktopBridge, buildMacosCoreSupervisor)
+        inputs.files(buildMacosDesktopBridge, buildMacosCoreSupervisor)
         doLast {
+            copy {
+                from(layout.buildDirectory.file("macos-core/PerRouteCoreSupervisor"))
+                into(layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app/Contents/MacOS"))
+            }
             copy {
                 from(layout.buildDirectory.file("macos-desktop/libPerRouteDesktopBridge.dylib"))
                 into(layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app/Contents/Frameworks"))
@@ -735,5 +748,30 @@ tasks.register<JavaExec>("runMacosPerAppBackendTests") {
     mainClass.set("app.perroute.platform.macos.MacPerAppBackendTests")
     systemProperty("perroute.portOffset", "25000")
     args(layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
+    enableAssertions = true
+}
+
+val buildMacosCoreFixture = tasks.register<Exec>("buildMacosCoreFixture") {
+    inputs.file("native/macos-core/CoreFixture.c")
+    outputs.file(layout.buildDirectory.file("macos-core/core-fixture"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { layout.buildDirectory.dir("macos-core").get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-Wall", "-Wextra", "-Werror", "native/macos-core/CoreFixture.c", "-o",
+        layout.buildDirectory.file("macos-core/core-fixture").get().asFile.absolutePath)
+}
+tasks.register<Exec>("runMacosCoreSupervisorTests") {
+    dependsOn(buildMacosCoreSupervisor, buildMacosCoreFixture)
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine("python3", "scripts/test_macos_core_supervisor.py",
+        layout.buildDirectory.file("macos-core/PerRouteCoreSupervisor").get().asFile.absolutePath,
+        layout.buildDirectory.file("macos-core/core-fixture").get().asFile.absolutePath)
+}
+tasks.register<JavaExec>("runMacosCoreProcessTests") {
+    dependsOn(tasks.named("testClasses"), buildMacosCoreSupervisor)
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.service.MacCoreProcessTests")
+    args(layout.buildDirectory.file("macos-core/PerRouteCoreSupervisor").get().asFile.absolutePath,
+        layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
     enableAssertions = true
 }

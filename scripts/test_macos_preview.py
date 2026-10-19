@@ -16,7 +16,7 @@ class PreviewTests(unittest.TestCase):
                      'CFBundleShortVersionString': '3.0.0', 'LSMinimumSystemVersion': '13.0'}
         native = ['MacOS/PerRoute', 'runtime/Contents/Home/lib/server/libjvm.dylib', 'app/resources/xray/macos-arm64/xray',
                   'Library/HelperTools/PerRouteProxyHelper', 'Frameworks/libPerRouteProxyBridge.dylib',
-                  'Frameworks/libPerRouteDesktopBridge.dylib']
+                  'Frameworks/libPerRouteDesktopBridge.dylib', 'MacOS/PerRouteCoreSupervisor']
         for name in native:
             target = self.contents / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -38,7 +38,7 @@ class PreviewTests(unittest.TestCase):
     def test_complete_bundle(self):
         version, binaries = self.check_bundle()
         self.assertEqual(version, '3.0.0')
-        self.assertEqual(len(binaries), 6)
+        self.assertEqual(len(binaries), 7)
 
     def test_identity_and_version(self):
         for key, value in [('CFBundleIdentifier', 'other'), ('CFBundleExecutable', 'other'),
@@ -52,7 +52,7 @@ class PreviewTests(unittest.TestCase):
         self.write_info()
 
     def test_missing_required_components(self):
-        for name in ['Resources/PerRoute.icns', 'Frameworks/libPerRouteDesktopBridge.dylib', 'app/resources/LICENSE']:
+        for name in ['Resources/PerRoute.icns', 'Frameworks/libPerRouteDesktopBridge.dylib', 'app/resources/LICENSE', 'MacOS/PerRouteCoreSupervisor']:
             target = self.contents / name
             saved = target.read_bytes()
             target.unlink()
@@ -79,6 +79,10 @@ class PreviewTests(unittest.TestCase):
 
     def test_nonexecutable_engine(self):
         (self.contents / 'app/resources/xray/macos-arm64/xray').chmod(0o644)
+        with self.assertRaises(ValueError): self.check_bundle()
+
+    def test_nonexecutable_supervisor(self):
+        (self.contents / 'MacOS/PerRouteCoreSupervisor').chmod(0o644)
         with self.assertRaises(ValueError): self.check_bundle()
 
     def test_aliased_required_component(self):

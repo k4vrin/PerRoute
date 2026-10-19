@@ -18,6 +18,7 @@ public final class XrayProcessManager implements AutoCloseable {
     private final XrayRuntime runtime;
     private final Path dataDirectory;
     private volatile Process process;
+    private long corePid;
     private final ProcessStarter starter;
     @FunctionalInterface interface ProcessStarter { Process start(ProcessBuilder builder) throws IOException; }
 
@@ -42,7 +43,7 @@ public final class XrayProcessManager implements AutoCloseable {
     public synchronized long ownedProcessId() throws IOException {
         Process current = process;
         if (current == null || !current.isAlive()) throw new IOException("The owned Xray process is not running");
-        return current.pid();
+        return corePid;
     }
 
     public synchronized void start(String config) throws IOException, InterruptedException {
@@ -63,8 +64,14 @@ public final class XrayProcessManager implements AutoCloseable {
         ProcessBuilder builder = new ProcessBuilder(executable.toString(), "run", "-config", configPath.toString());
         builder.directory(coreDir.toFile());
         builder.redirectErrorStream(true);
-        Process started = starter.start(builder);
+        String resources = System.getProperty("compose.application.resources.dir");
+        boolean packagedMac = runtime.target() != XrayRuntime.Target.WINDOWS_X64 && resources != null;
+        MacCoreProcess.Started owned = packagedMac
+                ? MacCoreProcess.start(builder, Path.of(resources).resolve("../../MacOS/PerRouteCoreSupervisor").normalize(), starter)
+                : null;
+        Process started = owned == null ? starter.start(builder) : owned.process();
         process = started;
+        corePid = owned == null ? started.pid() : owned.corePid();
         StartupOutput startup = new StartupOutput();
         Thread drain = Thread.ofPlatform().daemon().name("xray-output").start(() -> readOutput(started, startup));
         try {
@@ -176,7 +183,7 @@ public final class XrayProcessManager implements AutoCloseable {
         } else fireLog("The owned Xray process did not exit after termination; it remains tracked.");
     }
 
-    private static boolean terminateOwned(Process child) {
+    static boolean terminateOwned(Process child) {
         boolean interrupted = Thread.interrupted();
         try {
             if (child.isAlive()) {
