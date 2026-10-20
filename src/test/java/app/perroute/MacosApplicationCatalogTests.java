@@ -38,6 +38,13 @@ public final class MacosApplicationCatalogTests {
         fail(() -> new MacApplicationCatalog(op -> "{broken").installed());
         fail(() -> new MacApplicationCatalog(op -> "{\"error\":\"unavailable\"}").installed());
         fail(() -> new MacApplicationCatalog(op -> " ".repeat(4_194_305)).installed());
+        var helper = app("/Applications/Editor.app/Contents/Frameworks/Network.app");
+        helper.put("name", "Editor — Network Helper");
+        var family = catalog(List.of(upper, helper), List.of()).installed();
+        check(family.applications().size() == 2, "Main and helper remain independently selectable");
+        check(family.applications().stream().anyMatch(a -> a.name().equals("Editor — Network Helper")), "Owner label preserved");
+        check(family.applications().stream().map(a -> a.executablePath().toString()).distinct().count() == 2,
+                "Helper keeps its own exact executable authority");
         var operations = new ArrayList<String>();
         var source = new MacApplicationCatalog(op -> { operations.add(op); return "{\"version\":1,\"applications\":[],\"warnings\":[]}"; });
         source.installed(); source.running();
@@ -46,6 +53,7 @@ public final class MacosApplicationCatalogTests {
             var real = MacApplicationCatalog.system();
             var installed = real.installed(); var running = real.running();
             check(!installed.applications().isEmpty(), "Known macOS application roots produce an inventory");
+            check(installed.warnings().isEmpty(), "Installed inventory is complete enough for the picker");
             check(running.applications().stream().allMatch(a -> a.bundlePath().isAbsolute()), "Running bundles use absolute identities");
             System.out.println("Read-only native catalog: " + installed.applications().size() + " installed, " + running.applications().size() + " running; no names or paths logged");
         }

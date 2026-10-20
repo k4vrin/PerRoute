@@ -32,6 +32,60 @@ static NSDictionary *Application(NSURL *url) {
         @"teamIdentifier": team, @"signingIdentifier": signingIdentifier, @"signatureValid": @(valid)};
 }
 
+// A browser's network owner may be a nested helper rather than its main executable.
+// Discover candidates only; each returned exact path still requires explicit selection.
+static void AddApplicationFamilyLimited(NSURL *url, NSMutableDictionary *entries, NSMutableArray *warnings, NSUInteger limit) {
+    NSDictionary *main = Application(url);
+    if (!main) return;
+    entries[main[@"bundlePath"]] = main;
+    NSURL *root = [NSURL fileURLWithPath:main[@"bundlePath"]];
+    NSString *prefix = [root.path stringByAppendingString:@"/"];
+    NSURL *contents = [root URLByAppendingPathComponent:@"Contents"];
+    NSSet *helperDirectories = [NSSet setWithArray:@[@"Frameworks", @"Library", @"Helpers", @"PlugIns", @"XPCServices", @"Applications", @"MacOS"]];
+    NSDirectoryEnumerator *enumerator = [NSFileManager.defaultManager enumeratorAtURL:contents
+        includingPropertiesForKeys:@[NSURLIsSymbolicLinkKey, NSURLIsDirectoryKey] options:NSDirectoryEnumerationSkipsHiddenFiles
+        errorHandler:^BOOL(NSURL *ignored, NSError *error) {
+            (void)ignored; (void)error;
+            if (!warnings.count) [warnings addObject:@"Some application helpers could not be read"];
+            return YES;
+        }];
+    NSUInteger visited = 0;
+    for (NSURL *candidate in enumerator) {
+        if (++visited > limit || entries.count > 4096) {
+            if (!warnings.count) [warnings addObject:@"Application helper inventory exceeds its size limit"];
+            break;
+        }
+        NSNumber *symlink = nil;
+        if (![candidate getResourceValue:&symlink forKey:NSURLIsSymbolicLinkKey error:NULL]) {
+            if (!warnings.count) [warnings addObject:@"Some application helpers could not be read"];
+            break;
+        }
+        // URL enumeration does not follow symbolic-link directories. Calling skipDescendants
+        // on a link/file can skip the containing directory's remaining siblings.
+        if (symlink.boolValue) continue;
+        // Limit discovery to conventional executable locations rather than walking developer
+        // toolchains, bundled source trees and other application data.
+        BOOL unsupportedRoot = [candidate.URLByDeletingLastPathComponent.path isEqual:contents.path] &&
+            ![helperDirectories containsObject:candidate.lastPathComponent];
+        if (unsupportedRoot || [candidate.lastPathComponent isEqual:@"Resources"] || [candidate.pathExtension isEqual:@"lproj"]) {
+            NSNumber *directory = nil;
+            if ([candidate getResourceValue:&directory forKey:NSURLIsDirectoryKey error:NULL] && directory.boolValue)
+                [enumerator skipDescendants];
+            continue;
+        }
+        if (![candidate.pathExtension isEqual:@"app"]) continue;
+        NSDictionary *helper = Application(candidate);
+        if (!helper || ![helper[@"bundlePath"] hasPrefix:prefix] || entries[helper[@"bundlePath"]]) continue;
+        NSMutableDictionary *labelled = [helper mutableCopy];
+        labelled[@"name"] = [NSString stringWithFormat:@"%@ — %@", main[@"name"], helper[@"name"]];
+        entries[helper[@"bundlePath"]] = labelled;
+    }
+}
+
+static void AddApplicationFamily(NSURL *url, NSMutableDictionary *entries, NSMutableArray *warnings) {
+    AddApplicationFamilyLimited(url, entries, warnings, 16384);
+}
+
 __attribute__((visibility("default"))) char *perroute_catalog_request(const char *operation) {
     @autoreleasepool {
         NSMutableDictionary *entries = [NSMutableDictionary dictionary];
@@ -49,8 +103,7 @@ __attribute__((visibility("default"))) char *perroute_catalog_request(const char
                     }];
                 for (NSURL *url in enumerator) {
                     if (![url.pathExtension isEqual:@"app"]) continue;
-                    NSDictionary *app = Application(url);
-                    if (app) entries[app[@"bundlePath"]] = app;
+                    AddApplicationFamily(url, entries, warnings);
                     if (entries.count > 4096) break;
                 }
                 if (entries.count > 4096) break;

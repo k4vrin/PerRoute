@@ -483,6 +483,22 @@ tasks.matching { it.name == "createDistributable" }.configureEach {
         }
     }
 }
+val buildMacosApplicationFamilyTests = tasks.register<Exec>("buildMacosApplicationFamilyTests") {
+    inputs.dir("native/macos-desktop")
+    outputs.file(layout.buildDirectory.file("macos-desktop/ApplicationFamilyTests"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    doFirst { layout.buildDirectory.dir("macos-desktop").get().asFile.mkdirs() }
+    commandLine("xcrun", "clang", "-fobjc-arc", "-fmodules", "-Wall", "-Wextra", "-Werror",
+        "-mmacosx-version-min=13.0", "-framework", "AppKit", "-framework", "Security",
+        "native/macos-desktop/ApplicationFamilyTests.m", "-o",
+        layout.buildDirectory.file("macos-desktop/ApplicationFamilyTests").get().asFile.absolutePath)
+}
+tasks.register<Exec>("runMacosApplicationFamilyTests") {
+    dependsOn(buildMacosApplicationFamilyTests)
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(layout.buildDirectory.file("macos-desktop/ApplicationFamilyTests").get().asFile.absolutePath)
+}
+
 tasks.register<JavaExec>("runMacosApplicationCatalogTests") {
     dependsOn(tasks.named("testClasses"), buildMacosDesktopBridge)
     classpath = sourceSets["test"].runtimeClasspath

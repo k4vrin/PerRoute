@@ -8,7 +8,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.*;
 
-/** Read-only bundle observations. These identities are not persisted or used to match traffic. */
+/** Read-only executable candidates; signing metadata is observational, not routing authority. */
 public final class MacApplicationCatalog {
     public record Application(String name, Path bundlePath, Path executablePath, String bundleIdentifier,
                               String signingIdentifier, String teamIdentifier, boolean signatureValid) { }
