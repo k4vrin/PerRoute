@@ -23,6 +23,8 @@ import java.util.function.Consumer;
 /** Owns its local Xray child and an optional, explicitly wired system-proxy lifecycle. */
 public final class MacConnectionBackend implements ConnectionBackend, StartupRecovery {
     private final BackendCapabilities capabilities;
+    private final MacApplicationCatalog catalog;
+    private final MacApplicationFamilies families;
     private final List<Consumer<String>> logs = new CopyOnWriteArrayList<>();
     private final List<Consumer<GatewayConnection>> connections = new CopyOnWriteArrayList<>();
     private final AppGateway gateway = new AppGateway(value -> connections.forEach(listener -> listener.accept(value)),
@@ -43,9 +45,16 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
     }
     public MacConnectionBackend(XrayRuntime runtime, Path data, boolean persistent,
             app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy, MacTunSessionClient session) {
+        this(runtime,data,persistent,systemProxy,session,MacApplicationCatalog.system());
+    }
+    public MacConnectionBackend(XrayRuntime runtime, Path data, boolean persistent,
+            app.perroute.platform.macos.proxy.MacSystemProxyLifecycle systemProxy, MacTunSessionClient session,
+            MacApplicationCatalog catalog) {
+        this.catalog = java.util.Objects.requireNonNull(catalog);
+        this.families = new MacApplicationFamilies(catalog);
         if (session != null && (!persistent || systemProxy == null))
             throw new IllegalArgumentException("Per-app routing requires durable state and proxy recovery");
-        perApp = session == null ? null : new MacPerAppRouting(session,gateway);
+        perApp = session == null ? null : new MacPerAppRouting(session,gateway,families::bindings);
         if (systemProxy != null && !persistent) throw new IllegalArgumentException("System proxy requires durable recovery state");
         this.systemProxy = systemProxy;
         capabilities = perApp != null ? BackendCapabilities.macosPerApp() : systemProxy != null ? BackendCapabilities.macosSystemProxy()
@@ -147,6 +156,7 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
         perApp.verify();
     }
     @Override public String selectApplication(String path) throws java.io.IOException {
+        if (ApplicationIdentity.isMacFamily(path)) return families.validateSelection(path);
         String raw = ApplicationIdentity.path(path);
         if (raw == null || !raw.startsWith("/")) throw new java.io.IOException("Select a macOS executable from the application list.");
         Path executable = Path.of(raw).toRealPath();
@@ -161,17 +171,16 @@ public final class MacConnectionBackend implements ConnectionBackend, StartupRec
         return resolved;
     }
     @Override public List<ApplicationDescriptor> installedApplications() {
-        return descriptors(MacApplicationCatalog.system()::installed);
+        return descriptors(catalog::installed);
     }
     @Override public List<ApplicationDescriptor> runningApplications() {
-        return descriptors(MacApplicationCatalog.system()::running);
+        return descriptors(catalog::running);
     }
     private static List<ApplicationDescriptor> descriptors(CatalogRead source) {
         try {
             var snapshot = source.read();
             if (!snapshot.warnings().isEmpty()) throw new java.io.IOException(String.join("; ", snapshot.warnings()));
-            return snapshot.applications().stream()
-                    .map(app -> new ApplicationDescriptor(app.name(), ApplicationIdentity.macExecutable(app.executablePath().toString()))).toList();
+            return MacApplicationFamilies.descriptors(snapshot);
         } catch (java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
     }
     @FunctionalInterface private interface CatalogRead { MacApplicationCatalog.Snapshot read() throws java.io.IOException; }

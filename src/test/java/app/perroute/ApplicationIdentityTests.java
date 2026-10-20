@@ -19,7 +19,12 @@ import java.util.*;
 public final class ApplicationIdentityTests {
     private static int checks;
     public static void main(String[] args) throws Exception {
-        String upper = ApplicationIdentity.macExecutable("/Applications/Editor فارسی.app/Contents/MacOS/Editor ");
+        String mainPath = "/Applications/Editor فارسی.app/Contents/MacOS/Editor ";
+        String upper = args.length > 0 ? ApplicationIdentity.macAppFamily(mainPath) : ApplicationIdentity.macExecutable(mainPath);
+        check(!AppRoutes.normalize(ApplicationIdentity.macAppFamily(mainPath)).equals(AppRoutes.normalize(ApplicationIdentity.macExecutable(mainPath))),
+                "Family opt-in stays distinct from a main-only saved selection");
+        check(app.perroute.compose.controller.PerRouteController.Companion.displayName(ApplicationIdentity.macAppFamily(mainPath)).endsWith("(including helpers)"),
+                "Family scope remains visible outside the picker");
         String lower = ApplicationIdentity.macExecutable("/Applications/editor فارسی.app/Contents/MacOS/editor ");
         check(!AppRoutes.normalize(upper).equals(AppRoutes.normalize(lower)), "Case variants remain distinct");
         check(AppRoutes.normalize(upper).equals(upper), "No case, slash, Unicode or whitespace loss");

@@ -791,3 +791,19 @@ tasks.register<JavaExec>("runMacosCoreProcessTests") {
         layout.projectDirectory.dir("tools/xray").asFile.absolutePath)
     enableAssertions = true
 }
+
+// Repeat persistence, routes, rules, profiles, backups and history checks with explicit family identity.
+tasks.register<JavaExec>("runMacosApplicationFamilyIdentityTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.ApplicationIdentityTests")
+    args("family")
+    enableAssertions = true
+}
+
+tasks.register<JavaExec>("runMacosApplicationFamilyRoutingTests") {
+    dependsOn(tasks.named("testClasses"))
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.platform.macos.MacApplicationFamilyTests")
+    enableAssertions = true
+}

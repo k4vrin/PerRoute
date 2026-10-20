@@ -2532,6 +2532,7 @@ class PerRouteController @JvmOverloads constructor(
         fun displayName(applicationPath: String): String =
             runCatching { Path.of(ApplicationIdentity.path(applicationPath)).fileName.toString() }.getOrDefault(applicationPath)
                 .let { if (it.endsWith(".exe", ignoreCase = true)) it.dropLast(4) else it }
+                .let { if (ApplicationIdentity.isMacFamily(applicationPath)) "$it (including helpers)" else it }
 
         private fun isUserFacingApplication(app: ApplicationDescriptor): Boolean {
             return isUserFacingApplication(app.name(), app.path())

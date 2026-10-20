@@ -206,7 +206,7 @@ internal fun AppsScreen(shell: Shell) {
                 GlassCard(Modifier.weight(1f).fillMaxHeight()) {
                     Column(Modifier.fillMaxSize().padding(15.dp)) {
                         Text("Applications", color = White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        if (macRouting) InfoBanner("Candidate: selected executable TCP/IPv4 traffic. Select separate helper executables when needed. UDP, IPv6 and DNS coverage are not established.", Modifier.fillMaxWidth())
+                        if (macRouting) InfoBanner("Candidate: TCP/IPv4 traffic. Choose “including helpers” to route an app and its contained helpers together. Select either that group or individual executables. Safari shared networking, UDP, IPv6 and DNS coverage are not established.", Modifier.fillMaxWidth())
                         Text(if (draft.advanced) "Select apps, then choose how each one picks its server." else "Select the apps that should use the proxy.",
                             color = Muted, fontSize = 11.sp)
                         Spacer(Modifier.height(10.dp))
@@ -246,7 +246,7 @@ internal fun AppsScreen(shell: Shell) {
                             val available = if (source == AppListSource.RUNNING) running else installed
                             // Apps added with Browse, or no longer discovered, still need a row to be managed.
                             val extra = manual.filter { path -> available.none { ApplicationIdentity.same(it.path, path) } }
-                                .map { AppChoice(fileName(it), it) }
+                                .map { AppChoice(appName(it), it) }
                             // Saved selections lead the list. The order is fixed when the list loads, so ticking
                             // a box never makes its row jump away from the pointer.
                             val pinned = remember(available, shell.apps.toList()) { shell.apps.mapTo(hashSetOf()) { ApplicationIdentity.comparisonKey(it) } }

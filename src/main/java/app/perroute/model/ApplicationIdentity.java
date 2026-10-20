@@ -9,7 +9,15 @@ public final class ApplicationIdentity {
     public static final String MACOS_EXECUTABLE = "macos-executable:";
     private ApplicationIdentity() {}
 
-    public static boolean isMac(String value) { return value != null && value.startsWith(MACOS_EXECUTABLE); }
+    public static final String MACOS_APP_FAMILY = "macos-app-family:";
+    public static boolean isMacFamily(String value) { return value != null && value.startsWith(MACOS_APP_FAMILY); }
+    public static boolean isMac(String value) { return value != null && (value.startsWith(MACOS_EXECUTABLE) || isMacFamily(value)); }
+
+    /** Explicit opt-in to the discovered main executable and its contained helpers, resolved at Connect. */
+    public static String macAppFamily(String mainExecutable) {
+        macExecutable(mainExecutable);
+        return MACOS_APP_FAMILY + mainExecutable;
+    }
 
     public static String macExecutable(String path) {
         if (path == null || !path.startsWith("/") || path.endsWith("/") || path.contains("\\") ||
@@ -22,7 +30,7 @@ public final class ApplicationIdentity {
 
     public static String path(String identity) {
         if (!isMac(identity)) return identity;
-        String path = identity.substring(MACOS_EXECUTABLE.length());
+        String path = identity.substring(isMacFamily(identity) ? MACOS_APP_FAMILY.length() : MACOS_EXECUTABLE.length());
         macExecutable(path);
         return path;
     }

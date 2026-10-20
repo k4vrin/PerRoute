@@ -158,6 +158,7 @@ public final class MacPerAppBackendTests {
                 backend.restorePerApp(); backend.stop(); backend.stopGateway();
             }
             check(!backend.isRunning() && !backend.gatewayRunning() && !Files.exists(marker),"All owned resources are stopped");
+            familyFlow(runtime,root);
             recoveryComposition(root);
             exactGatewayKeys();
             controllerFlow(runtime,first,second);
@@ -165,6 +166,48 @@ public final class MacPerAppBackendTests {
         } finally {
             try (var paths=Files.walk(root)) { for (var path:paths.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(path); }
         }
+    }
+    private static void familyFlow(XrayRuntime runtime, Path root) throws Exception {
+        Path bundle=root.resolve("Browser.app"), main=bundle.resolve("Contents/MacOS/Browser"),
+                helper=bundle.resolve("Contents/Frameworks/Network.app/Contents/MacOS/Network");
+        var rows=new ArrayList<Map<String,Object>>();
+        for (Path path:List.of(main,helper)) {
+            Files.createDirectories(path.getParent()); Files.writeString(path,"fixture; never executed");
+            check(path.toFile().setExecutable(true,true),"Family fixture executable permission");
+            rows.add(Map.of("name",path.getFileName().toString(),"bundlePath",path.getParent().getParent().getParent().toString(),
+                    "executablePath",path.toString(),"bundleIdentifier","fixture.browser","signingIdentifier","","teamIdentifier","","signatureValid",false));
+        }
+        var unavailable=new boolean[1];
+        var catalog=new MacApplicationCatalog(op -> {
+            if (unavailable[0]) throw new IOException("Inventory unavailable during core restart");
+            return Json.stringify(Map.of("version",1,"applications",rows,"warnings",List.of()));
+        });
+        var peer=new Peer(); var proxy=new ProxyLifecycle();
+        Path marker=root.resolve("family.pending");
+        var backend=new MacConnectionBackend(runtime,root.resolve("family-core"),true,proxy,new MacTunSessionClient(peer,marker),catalog);
+        String family=ApplicationIdentity.macAppFamily(main.toString());
+        int gateway=port(), upstream=port();
+        var events=new CopyOnWriteArrayList<app.perroute.gateway.GatewayConnection>(); backend.addGatewayListener(events::add);
+        try (var destination=new Destination()) {
+            check(backend.selectApplication(family).equals(family) && backend.restoreApplication(family).equals(family),"Backend preserves explicit family identity");
+            check(backend.installedApplications().stream().anyMatch(app -> app.path().equals(family)),"Backend exposes explicit family picker choice");
+            backend.prepareConnection(); backend.start(configuration(upstream),false);
+            backend.startGateway(List.of(new AppGateway.Route(family,0,gateway,upstream)));
+            backend.applyPerApp(List.of(family));
+            check(peer.bindings.size()==2 && peer.upstreams.equals(List.of(upstream)),"Helper receives main/helper paths with one Xray upstream");
+            check(peer.bindings.stream().allMatch(value -> ((Number)((Map<?,?>)value).get("socksPort")).intValue()==gateway),"Family paths map to the same actual gateway");
+            backend.setGatewayLimits(family,1_000_000,1_000_000);
+            request(gateway,destination.socket.getLocalPort());
+            check(backend.gatewayCounters().size()==1 && backend.gatewayCounters().get(family).downloadBytes()>0,"Real loopback bytes aggregate under one family counter key");
+            check(events.size()==1 && events.getFirst().applicationPath().equals(family),"Inspector event retains logical family identity");
+            var frozen=List.copyOf(peer.bindings); long pid=peer.pids.getLast();
+            unavailable[0]=true;
+            backend.stop(); backend.start(configuration(upstream),false); backend.verifyPerAppSession();
+            check(peer.pids.getLast()!=pid && peer.bindings.equals(frozen),"Core restart preserves frozen membership without expanding a changed inventory");
+        } finally {
+            backend.restorePerApp(); backend.stop(); backend.stopGateway();
+        }
+        check(!Files.exists(marker) && !backend.isRunning() && !backend.gatewayRunning(),"Family session resources restored");
     }
     private static void recoveryComposition(Path root) throws Exception {
         String resources=System.getProperty("compose.application.resources.dir");
