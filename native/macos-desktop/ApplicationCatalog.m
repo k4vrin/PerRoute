@@ -1,13 +1,25 @@
 #import <AppKit/AppKit.h>
 #import <Security/Security.h>
+#include <stdlib.h>
+
+static NSURL *CanonicalURL(NSURL *url) {
+    if (!url) return nil;
+    char *resolved = realpath(url.fileSystemRepresentation, NULL);
+    if (!resolved) return nil;
+    NSString *path = [NSFileManager.defaultManager stringWithFileSystemRepresentation:resolved length:strlen(resolved)];
+    free(resolved);
+    return [NSURL fileURLWithPath:path];
+}
 
 static NSDictionary *Application(NSURL *url) {
-    url = url.URLByResolvingSymlinksInPath.URLByStandardizingPath;
+    url = CanonicalURL(url);
+    if (!url) return nil;
     NSBundle *bundle = [NSBundle bundleWithURL:url];
-    NSURL *executable = bundle.executableURL.URLByResolvingSymlinksInPath.URLByStandardizingPath;
+    NSURL *executable = CanonicalURL(bundle.executableURL);
     NSString *identifier = bundle.bundleIdentifier;
     if (!bundle || !executable || !identifier.length || ![NSFileManager.defaultManager isExecutableFileAtPath:executable.path]) return nil;
-    // Resolve both sides consistently for system application aliases. Nonconventional wrappers
+    // Use filesystem canonical paths on both sides: Cryptex aliases (Safari) can otherwise
+    // resolve differently through Foundation and NSBundle. Nonconventional wrappers
     // such as iOS-on-Mac bundles are outside this initial catalog; do not invent executable identities.
     if (![executable.path hasPrefix:[url.path stringByAppendingString:@"/Contents/MacOS/"]]) return nil;
     NSString *name = [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"] ?: [bundle objectForInfoDictionaryKey:@"CFBundleName"];
@@ -27,8 +39,8 @@ static NSDictionary *Application(NSURL *url) {
     if (info) CFRelease(info);
     if (code) CFRelease(code);
     // Paths identify catalog entries only. Signing metadata is observational, not routing authority.
-    return @{@"name": name, @"bundlePath": url.URLByStandardizingPath.path,
-        @"executablePath": executable.URLByStandardizingPath.path, @"bundleIdentifier": identifier,
+    return @{@"name": name, @"bundlePath": url.path,
+        @"executablePath": executable.path, @"bundleIdentifier": identifier,
         @"teamIdentifier": team, @"signingIdentifier": signingIdentifier, @"signatureValid": @(valid)};
 }
 
@@ -86,6 +98,20 @@ static void AddApplicationFamily(NSURL *url, NSMutableDictionary *entries, NSMut
     AddApplicationFamilyLimited(url, entries, warnings, 16384);
 }
 
+static void AddRootApplicationAliases(NSURL *root, NSMutableDictionary *entries, NSMutableArray *warnings) {
+    // macOS marks Safari's top-level Cryptex alias hidden. Include app aliases even when
+    // their filesystem hidden flag would omit them from the ordinary recursive inventory.
+    NSArray *children = [NSFileManager.defaultManager contentsOfDirectoryAtURL:root
+        includingPropertiesForKeys:@[NSURLIsSymbolicLinkKey] options:0 error:NULL];
+    for (NSURL *url in children) {
+        if (![url.pathExtension isEqual:@"app"]) continue;
+        NSNumber *symlink = nil;
+        if ([url getResourceValue:&symlink forKey:NSURLIsSymbolicLinkKey error:NULL] && symlink.boolValue)
+            AddApplicationFamily(url, entries, warnings);
+        if (entries.count > 4096) break;
+    }
+}
+
 __attribute__((visibility("default"))) char *perroute_catalog_request(const char *operation) {
     @autoreleasepool {
         NSMutableDictionary *entries = [NSMutableDictionary dictionary];
@@ -95,6 +121,8 @@ __attribute__((visibility("default"))) char *perroute_catalog_request(const char
             NSArray *roots = @[@"/Applications", @"/System/Applications", [NSHomeDirectory() stringByAppendingPathComponent:@"Applications"]];
             for (NSString *root in roots) {
                 if (![NSFileManager.defaultManager fileExistsAtPath:root]) continue;
+                AddRootApplicationAliases([NSURL fileURLWithPath:root], entries, warnings);
+                if (entries.count > 4096) break;
                 NSDirectoryEnumerator *enumerator = [NSFileManager.defaultManager enumeratorAtURL:[NSURL fileURLWithPath:root]
                     includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles | NSDirectoryEnumerationSkipsPackageDescendants
                     errorHandler:^BOOL(NSURL *url, NSError *error) { (void)url; (void)error;

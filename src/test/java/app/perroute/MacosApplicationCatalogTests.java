@@ -54,6 +54,12 @@ public final class MacosApplicationCatalogTests {
             var installed = real.installed(); var running = real.running();
             check(!installed.applications().isEmpty(), "Known macOS application roots produce an inventory");
             check(installed.warnings().isEmpty(), "Installed inventory is complete enough for the picker");
+            var safariAlias = java.nio.file.Path.of("/Applications/Safari.app");
+            if (java.nio.file.Files.exists(safariAlias)) {
+                var safariExecutable = safariAlias.resolve("Contents/MacOS/Safari").toRealPath();
+                check(installed.applications().stream().anyMatch(a -> a.executablePath().equals(safariExecutable)),
+                        "Safari's hidden Cryptex alias yields its canonical executable");
+            }
             check(running.applications().stream().allMatch(a -> a.bundlePath().isAbsolute()), "Running bundles use absolute identities");
             System.out.println("Read-only native catalog: " + installed.applications().size() + " installed, " + running.applications().size() + " running; no names or paths logged");
         }
