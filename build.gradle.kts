@@ -465,7 +465,7 @@ val buildMacosDesktopBridge = tasks.register<Exec>("buildMacosDesktopBridge") {
     doFirst { layout.buildDirectory.dir("macos-desktop").get().asFile.mkdirs() }
     commandLine("xcrun", "clang", "-fobjc-arc", "-fmodules", "-Wall", "-Wextra", "-Werror", "-dynamiclib",
         "-arch", "arm64", "-arch", "x86_64", "-mmacosx-version-min=13.0", "-framework", "AppKit", "-framework", "Security",
-        "native/macos-desktop/ApplicationCatalog.m", "-o", layout.buildDirectory.file("macos-desktop/libPerRouteDesktopBridge.dylib").get().asFile.absolutePath)
+        "native/macos-desktop/ApplicationCatalog.m", "native/macos-desktop/ApplicationIcons.m", "-o", layout.buildDirectory.file("macos-desktop/libPerRouteDesktopBridge.dylib").get().asFile.absolutePath)
 }
 tasks.matching { it.name == "createDistributable" }.configureEach {
     if (System.getProperty("os.name") == "Mac OS X") {
@@ -805,5 +805,12 @@ tasks.register<JavaExec>("runMacosApplicationFamilyRoutingTests") {
     dependsOn(tasks.named("testClasses"))
     classpath = sourceSets["test"].runtimeClasspath
     mainClass.set("app.perroute.platform.macos.MacApplicationFamilyTests")
+    enableAssertions = true
+}
+
+tasks.register<JavaExec>("runMacosApplicationIconTests") {
+    dependsOn(tasks.named("testClasses"), buildMacosDesktopBridge)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("app.perroute.MacosApplicationIconTests")
     enableAssertions = true
 }

@@ -95,7 +95,9 @@ import app.perroute.model.ProxyNode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
-import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
+import java.util.LinkedHashMap
+import app.perroute.platform.macos.MacApplicationIcons
 
 /** The colours of one theme. */
 internal data class Palette(
@@ -691,16 +693,26 @@ internal fun ConfirmDialog(title: String, message: String, confirm: String, onCa
     }
 }
 
-private val appIconCache = ConcurrentHashMap<String, java.util.Optional<ImageBitmap>>()
+private val appIconCache = Collections.synchronizedMap(
+    object : LinkedHashMap<String, java.util.Optional<ImageBitmap>>(128, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, java.util.Optional<ImageBitmap>>?) = size > 256
+    }
+)
+private val macApplicationIcons by lazy { MacApplicationIcons.system() }
 
-/** The executable's own icon when Windows can provide one. Callers fall back to the letter avatar. */
 @Composable
 private fun rememberAppIcon(path: String): ImageBitmap? {
-    val key = ApplicationIdentity.comparisonKey(path)
+    // Main-only and explicit family choices share artwork, while retaining distinct routing keys.
+    val key = if (ApplicationIdentity.isMac(path)) ApplicationIdentity.path(path) else ApplicationIdentity.comparisonKey(path)
     val state = produceState(appIconCache[key]?.orElse(null), key) {
-        if (appIconCache.containsKey(key)) { value = appIconCache[key]?.orElse(null); return@produceState }
+        val cached = appIconCache[key]
+        if (cached != null) { value = cached.orElse(null); return@produceState }
         value = withContext(Dispatchers.IO) {
             val loaded = runCatching {
+                if (System.getProperty("os.name") == "Mac OS X") {
+                    val png = macApplicationIcons.png(path) ?: return@runCatching null
+                    return@runCatching png.inputStream().use { javax.imageio.ImageIO.read(it) }?.toComposeImageBitmap()
+                }
                 val file = java.io.File(ApplicationIdentity.path(path))
                 if (!file.isFile) return@runCatching null
                 val icon = javax.swing.filechooser.FileSystemView.getFileSystemView().getSystemIcon(file, 32, 32) ?: return@runCatching null
@@ -716,7 +728,7 @@ private fun rememberAppIcon(path: String): ImageBitmap? {
     return state.value
 }
 
-/** The application icon, or a coloured initial when Windows has none for it. */
+/** The native application icon, with an initial when no artwork is available. */
 @Composable
 internal fun AppAvatar(name: String, path: String = "", size: Dp = 34.dp) {
     val icon = if (path.isBlank()) null else rememberAppIcon(path)
@@ -728,7 +740,7 @@ internal fun AppAvatar(name: String, path: String = "", size: Dp = 34.dp) {
         return
     }
     val colors = listOf(Cyan, Violet2, Amber, Color(0xFFFF7C8E), Color(0xFF79A9FF))
-    val color = colors[kotlin.math.abs(name.hashCode()) % colors.size]
+    val color = colors[Math.floorMod(name.hashCode(), colors.size)]
     Box(Modifier.size(size).clip(shape).background(color.copy(.14f)), contentAlignment = Alignment.Center) {
         Text(name.firstOrNull()?.uppercase() ?: "A", color = color, fontSize = (size.value * .4f).sp, fontWeight = FontWeight.Bold)
     }
