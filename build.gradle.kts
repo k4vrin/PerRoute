@@ -732,8 +732,12 @@ tasks.register<Exec>("checkMacosTunCaptureCandidate") {
 tasks.register<Exec>("runMacosRoutingBundleTests") {
     commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/test_macos_routing_bundle.py")
 }
+tasks.register<Exec>("runMacosLocalSigningTests") {
+    group = "verification"
+    commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/test_macos_local_signing.py")
+}
 tasks.register<Exec>("stageMacosRoutingHelper") {
-    dependsOn(tasks.named("createDistributable"), tasks.named("runMacosRoutingBundleTests"))
+    dependsOn(tasks.named("createDistributable"), tasks.named("runMacosRoutingBundleTests"), tasks.named("runMacosLocalSigningTests"))
     onlyIf { System.getProperty("os.name") == "Mac OS X" }
     commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/macos_local_helper.py", "--app",
         layout.buildDirectory.dir("compose/binaries/main/app/PerRoute.app").get().asFile.absolutePath, "--routing")
@@ -827,6 +831,24 @@ tasks.register<Exec>("packageMacosDmg") {
     commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/macos_dmg.py", "--app",
         layout.buildDirectory.dir("macos-routing-helper/PerRoute.app").get().asFile.absolutePath,
         "--output", layout.buildDirectory.dir("macos-installer").get().asFile.absolutePath)
+}
+
+tasks.register<Exec>("runMacosPkgTests") {
+    group = "verification"
+    commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/test_macos_pkg.py")
+}
+
+tasks.register<Exec>("packageMacosPkg") {
+    group = "distribution"
+    description = "Build and extract-verify a preview Installer package for Applications"
+    dependsOn(tasks.named("stageMacosRoutingHelper"), tasks.named("runMacosDmgTests"), tasks.named("runMacosPkgTests"))
+    onlyIf { System.getProperty("os.name") == "Mac OS X" }
+    commandLine(providers.gradleProperty("pythonExecutable").getOrElse("python3"), "scripts/macos_pkg.py", "--app",
+        layout.buildDirectory.dir("macos-routing-helper/PerRoute.app").get().asFile.absolutePath,
+        "--output", layout.buildDirectory.dir("macos-pkg").get().asFile.absolutePath)
+    providers.gradleProperty("previousMacosHelperRecovery").orNull?.let {
+        args("--previous-helper-recovery", it)
+    }
 }
 
 val fetchMacosXray = tasks.register<Exec>("fetchMacosXray") {

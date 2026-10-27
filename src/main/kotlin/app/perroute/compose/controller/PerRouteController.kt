@@ -3320,7 +3320,11 @@ class PerRouteController @JvmOverloads constructor(
                 markSession(false)
                 Thread.currentThread().interrupt()
                 ActionResult(false, "Connection cancelled.$cleanupDetail")
-            } else ActionResult(false, message(e) + cleanupDetail)
+            } else {
+                val detail = message(e) + cleanupDetail
+                log("Connection failed: $detail")
+                ActionResult(false, detail)
+            }
         }
     }
 

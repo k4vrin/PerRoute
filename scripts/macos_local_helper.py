@@ -37,8 +37,17 @@ def seal(path, settings, identifier=None):
     signing.run(*command, path, quiet=True)
 
 
+def require_signing_state(state, installed_paths):
+    if not state.exists() and any(path.exists() or path.is_symlink() for path in installed_paths):
+        raise SystemExit('Local signing state is missing while PerRoute is installed. Restore the original signing state '
+                         'or explicitly retire the installed app/helper before creating a new publisher identity.')
+
+
 def build(app, *, routing=False):
     output = ROOT / ("build/macos-routing-helper" if routing else "build/macos-local-helper")
+    require_signing_state(signing.STATE, [Path('/Applications/PerRoute.app'),
+                                        Path('/Library/PrivilegedHelperTools/app.perroute.proxy-helper'),
+                                        Path('/Library/LaunchDaemons/app.perroute.proxy-helper.plist')])
     if not signing.STATE.exists():
         signing.create_identity()
     settings = signing.identity()
