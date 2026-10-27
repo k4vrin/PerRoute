@@ -82,7 +82,13 @@ fi
         script += f"""# This package carries the original signed retirement tool for exactly this certificate.
 if [ -e "$helper" ] && /usr/bin/codesign --verify --strict -R '{old_helper}' "$helper"; then
     script_dir=$(CDPATH= cd -P "$(/usr/bin/dirname "$0")" && pwd)
-    retirement="$script_dir/previous-helper/Contents/MacOS/PerRouteHelperInstaller"
+    umask 077
+    retirement_dir=$(/usr/bin/mktemp -d /private/var/tmp/perroute-retirement.XXXXXX) || fail "Could not stage the original retirement tool."
+    trap '/bin/rm -rf "$retirement_dir"' EXIT
+    /bin/mkdir -p "$retirement_dir/Contents/MacOS" "$retirement_dir/Contents/Library/HelperTools"
+    /bin/cp "$script_dir/previous-installer" "$retirement_dir/Contents/MacOS/PerRouteHelperInstaller"
+    /bin/cp "$script_dir/previous-helper" "$retirement_dir/Contents/Library/HelperTools/PerRouteProxyHelper"
+    retirement="$retirement_dir/Contents/MacOS/PerRouteHelperInstaller"
     /usr/bin/codesign --verify --strict -R '{old_installer}' "$retirement" || fail "Invalid original retirement tool."
     "$retirement" --uninstall || fail "The original helper could not be retired safely. Installation stopped."
 fi
@@ -220,10 +226,9 @@ def package(app, output, previous_helper_recovery=None):
         (scripts / 'postinstall').write_text(postinstall(pin))
         (scripts / 'postinstall').chmod(0o755)
         if previous_helper_recovery:
-            for name in ['Contents/MacOS/PerRouteHelperInstaller', 'Contents/Library/HelperTools/PerRouteProxyHelper']:
-                destination = scripts / 'previous-helper' / name
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(Path(previous_helper_recovery) / name, destination)
+            for source, name in [('Contents/MacOS/PerRouteHelperInstaller', 'previous-installer'),
+                                 ('Contents/Library/HelperTools/PerRouteProxyHelper', 'previous-helper')]:
+                shutil.copy2(Path(previous_helper_recovery) / source, scripts / name)
         components = work / 'components.plist'
         components.write_bytes(plistlib.dumps([{
             'RootRelativeBundlePath': 'PerRoute.app', 'BundleIsRelocatable': False,
@@ -254,8 +259,12 @@ def package(app, output, previous_helper_recovery=None):
             if (restored_scripts / name).read_bytes() != (scripts / name).read_bytes():
                 raise ValueError('Installer maintenance script changed during packaging')
         if previous_helper_recovery:
-            if previous_recovery_pin(restored_scripts / 'previous-helper') != previous_pin:
-                raise ValueError('Original helper retirement identity changed during packaging')
+            for name, identifier in [('previous-installer', 'app.perroute.proxy-installer'),
+                                     ('previous-helper', 'app.perroute.proxy-helper')]:
+                if (restored_scripts / name).read_bytes() != (scripts / name).read_bytes():
+                    raise ValueError('Original helper retirement payload changed during packaging')
+                run('/usr/bin/codesign', '--verify', '--strict', '-R',
+                    requirement(identifier, previous_pin), restored_scripts / name)
         verify_payload(app, restored)
         validate(restored, architecture)
         if verify_signature(restored) != pin:
