@@ -213,7 +213,7 @@ def package(app, output, previous_helper_recovery=None):
         raise ValueError("Previous helper recovery is only needed for a different certificate")
     revision = run('git', '-C', ROOT, 'rev-parse', 'HEAD')
     output.mkdir(parents=True, exist_ok=True)
-    name = f'PerRoute-{version}-macos-{architecture}-preview.pkg'
+    package_name = f'PerRoute-{version}-macos-{architecture}-preview.pkg'
     with tempfile.TemporaryDirectory(prefix='.pkg-', dir=output) as temporary:
         work = Path(temporary)
         payload = work / 'payload'
@@ -248,7 +248,7 @@ def package(app, output, previous_helper_recovery=None):
             'and report the error. Installation success does not establish launch success.\n')
         dist = work / 'Distribution.xml'
         dist.write_text(distribution(version, architecture))
-        archive = work / name
+        archive = work / package_name
         run('/usr/bin/productbuild', '--distribution', dist, '--resources', resources,
             '--package-path', work, archive)
         expanded = work / 'expanded'
@@ -291,9 +291,9 @@ def package(app, output, previous_helper_recovery=None):
             '\nRebuild: sh gradlew --no-daemon packageMacosPkg\n'
             'Verify download: shasum -a 256 -c SHA256SUMS\n')
         checksum = digest(archive)
-        archive.replace(output / name)
-        (output / 'SHA256SUMS').write_text(f'{checksum}  {name}\n')
-    print(f'PKG payload and signatures verified: {output / name}')
+        archive.replace(output / package_name)
+        (output / 'SHA256SUMS').write_text(f'{checksum}  {package_name}\n')
+    print(f'PKG payload and signatures verified: {output / package_name}')
     print('Unsigned/unnotarized preview. No app installation, helper registration or network changes performed.')
 
 
