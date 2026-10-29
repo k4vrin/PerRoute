@@ -125,6 +125,18 @@ public final class WindowsConnectionBackend implements ConnectionBackend, Startu
     @Override public boolean perAppReady() {
         try { return perApp().inspect().ready(); } catch (Exception | LinkageError error) { return false; }
     }
+    @Override public PerAppDriverState perAppDriverState() {
+        return switch (perApp().driverState()) {
+            case RUNNING -> PerAppDriverState.RUNNING;
+            case STOPPED -> PerAppDriverState.STOPPED;
+            case MISSING -> PerAppDriverState.MISSING;
+            case UNKNOWN -> PerAppDriverState.UNKNOWN;
+        };
+    }
+    @Override public String perAppDriverName() { return ProxiFyreManager.DRIVER_NAME; }
+    @Override public String perAppReadinessMessage() {
+        return "Smart per-app needs the per-app engine and the Windows Packet Filter driver, and one of them is missing (see the Doctor). Reinstall PerRoute with the Full Installer and approve its single UAC prompt, or choose Local proxy/System proxy.";
+    }
     @Override public boolean elevated() {
         try { return AdminCheck.isElevated(); } catch (Exception | LinkageError error) { return false; }
     }

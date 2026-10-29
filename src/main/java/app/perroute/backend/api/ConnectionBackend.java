@@ -18,6 +18,9 @@ public interface ConnectionBackend {
     default boolean supportsExplorerMenu() { return false; }
     boolean coreReady();
     boolean perAppReady();
+    enum PerAppDriverState { RUNNING, STOPPED, MISSING, UNKNOWN }
+    default PerAppDriverState perAppDriverState() { return PerAppDriverState.UNKNOWN; }
+    default String perAppDriverName() { return ""; }
     boolean elevated();
     default boolean requiresPerAppGateway() { return false; }
     default boolean supportsPerAppKillSwitch() { return true; }

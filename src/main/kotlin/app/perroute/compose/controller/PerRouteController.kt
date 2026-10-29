@@ -1730,9 +1730,17 @@ class PerRouteController @JvmOverloads constructor(
             "Xray is missing, so no connection can start.", Repair.OPEN_COMPONENTS)
         else HealthFinding("core", "PerRoute", CheckStatus.PASS, "The connection core is installed", "")
         if (mode == ConnectionMode.NATIVE_PER_APP) {
-            findings += if (!environment.perAppReady) HealthFinding("engine", "PerRoute", CheckStatus.FAIL, "The per-app engine is not installed",
-                "Smart per-app needs it to send the selected apps to the tunnel. Install PerRoute with the Full Installer.", Repair.OPEN_COMPONENTS)
-            else HealthFinding("engine", "PerRoute", CheckStatus.PASS, "The per-app engine is installed", "")
+            val driver = runCatching { backend.perAppDriverState() }.getOrDefault(ConnectionBackend.PerAppDriverState.UNKNOWN)
+            findings += when {
+                !environment.perAppReady && driver == ConnectionBackend.PerAppDriverState.MISSING -> HealthFinding("engine", "PerRoute", CheckStatus.FAIL, "The Windows Packet Filter driver is missing",
+                    "The per-app engine is there, but the driver it uses to redirect apps (${backend.perAppDriverName()}) is not installed, so selected apps cannot be routed. " +
+                        "Reinstall PerRoute with the Full Installer and restart Windows if it asks. Another network filter, VPN or security tool can also stop the driver from installing.", Repair.OPEN_COMPONENTS)
+                !environment.perAppReady -> HealthFinding("engine", "PerRoute", CheckStatus.FAIL, "The per-app engine is not installed",
+                    "Smart per-app needs it to send the selected apps to the tunnel. Install PerRoute with the Full Installer.", Repair.OPEN_COMPONENTS)
+                driver == ConnectionBackend.PerAppDriverState.STOPPED -> HealthFinding("engine", "PerRoute", CheckStatus.WARN, "The Windows Packet Filter driver is not running",
+                    "The driver (${backend.perAppDriverName()}) is installed but stopped, so selected apps may go out directly. Restart Windows, or reinstall PerRoute with the Full Installer.", Repair.OPEN_COMPONENTS)
+                else -> HealthFinding("engine", "PerRoute", CheckStatus.PASS, "The per-app engine and driver are installed", "")
+            }
         }
 
         when {
