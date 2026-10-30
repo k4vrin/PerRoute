@@ -1,0 +1,74 @@
+name: PR 6 Windows review installer
+on:
+  push:
+    branches: [build/windows-pr6-review]
+permissions:
+  contents: read
+jobs:
+  installer:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    env:
+      ORG_GRADLE_PROJECT_officialRepositories: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c6dc715a8e7f833212ab2449b95c64ee6a93fe18
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare pinned Windows Xray core
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne 'c6dc715a8e7f833212ab2449b95c64ee6a93fe18') { throw 'Unexpected source commit' }
+          $lock = Get-Content browser/helper/xray/xray.lock.json -Raw | ConvertFrom-Json
+          $asset = $lock.assets.'windows-x64'
+          $zip = Join-Path $env:RUNNER_TEMP 'xray-windows.zip'
+          Invoke-WebRequest "$($lock.source)/$($lock.version)/$($asset.file)" -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $asset.sha256) { throw 'Xray archive hash mismatch' }
+          Expand-Archive $zip tools/xray -Force
+          if ((Get-FileHash tools/xray/xray.exe -Algorithm SHA256).Hash.ToLowerInvariant() -ne $asset.binarySha256) { throw 'Xray binary hash mismatch' }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { throw 'Rust setup failed' }
+      - name: Build complete Windows installer
+        shell: pwsh
+        run: .\package.ps1
+      - name: Record source and checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Get-Item dist/PerRoute-Setup-3.6.0.exe
+          if ($installer.Length -lt 1000000) { throw 'Installer is unexpectedly small' }
+          $metadata = [ordered]@{
+            pullRequest = 'https://github.com/0xVexor/PerRoute/pull/6'
+            sourceRevision = (git rev-parse HEAD).Trim()
+            version = '3.6.0'
+            platform = 'windows-x64'
+            workflowRun = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            installerSha256 = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            authenticodeStatus = (Get-AuthenticodeSignature $installer.FullName).Status.ToString()
+            runtimeTested = $false
+          }
+          $metadata | ConvertTo-Json | Set-Content dist/BUILD.json -Encoding utf8
+          Get-ChildItem dist -File | Where-Object Name -Match '\.(exe|zip|json)$' | ForEach-Object {
+            '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
+          } | Set-Content dist/SHA256SUMS -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PerRoute-PR6-c6dc715-windows-x64
+          path: |
+            dist/PerRoute-Setup-3.6.0.exe
+            dist/PerRoute-Portable-3.6.0.zip
+            dist/PerRoute-Browser-3.6.0.zip
+            dist/BUILD.json
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
